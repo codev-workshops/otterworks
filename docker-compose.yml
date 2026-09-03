@@ -1,0 +1,534 @@
+version: '3.9'
+services:
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    container_name: otterworks-api-gateway
+    ports:
+    - 8080:8080
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: otterworks
+      POSTGRES_PASSWORD: otterworks_dev
+      POSTGRES_DB: otterworks
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: api-gateway
+      AUTH_SERVICE_URL: http://auth-service:8081
+      FILE_SERVICE_URL: http://file-service:8082
+      DOCUMENT_SERVICE_URL: http://document-service:8083
+      COLLAB_SERVICE_URL: http://collab-service:8084
+      NOTIFICATION_SERVICE_URL: http://notification-service:8086
+      SEARCH_SERVICE_URL: http://search-service:8087
+      ANALYTICS_SERVICE_URL: http://analytics-service:8088
+      ADMIN_SERVICE_URL: http://admin-service:8089
+      AUDIT_SERVICE_URL: http://audit-service:8090
+      REPORT_SERVICE_URL: http://report-service:8091
+      JWT_SECRET: ${JWT_SECRET:-otterworks-local-dev-jwt-secret-change-me-in-production}
+    depends_on:
+    - auth-service
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://127.0.0.1:8080/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: otterworks-auth-service
+    ports:
+    - 8081:8081
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: otterworks
+      POSTGRES_PASSWORD: otterworks_dev
+      POSTGRES_DB: otterworks
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: auth-service
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/otterworks
+      SPRING_DATASOURCE_USERNAME: otterworks
+      SPRING_DATASOURCE_PASSWORD: otterworks_dev
+      JWT_SECRET: ${JWT_SECRET:-otterworks-local-dev-jwt-secret-change-me-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8081/health
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
+  file-service:
+    build:
+      context: ./services/file-service
+      dockerfile: Dockerfile
+    container_name: otterworks-file-service
+    ports:
+    - 8082:8082
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: otterworks
+      POSTGRES_PASSWORD: otterworks_dev
+      POSTGRES_DB: otterworks
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: file-service
+      S3_BUCKET: otterworks-files
+      DYNAMODB_TABLE: otterworks-file-metadata
+      SNS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:otterworks-events
+      SEARCH_SERVICE_URL: http://search-service:8087
+      JWT_SECRET: ${JWT_SECRET:-otterworks-local-dev-jwt-secret-change-me-in-production}
+    depends_on:
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8082/health
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
+  document-service:
+    build:
+      context: ./services/document-service
+      dockerfile: Dockerfile
+    container_name: otterworks-document-service
+    ports:
+    - 8083:8083
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: otterworks
+      POSTGRES_PASSWORD: otterworks_dev
+      POSTGRES_DB: otterworks
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: document-service
+      DOC_SVC_DATABASE_URL: postgresql+asyncpg://otterworks:otterworks_dev@postgres:5432/otterworks
+      DOC_SVC_SNS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:otterworks-events
+      DOC_SVC_AWS_ENDPOINT_URL: http://localstack:4566
+      DOC_SVC_SNS_ENABLED: 'true'
+      JWT_SECRET: ${JWT_SECRET:-otterworks-local-dev-jwt-secret-change-me-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8083/health
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
+  collab-service:
+    build:
+      context: ./services/collab-service
+      dockerfile: Dockerfile
+    container_name: otterworks-collab-service
+    ports:
+    - 8084:8084
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: otterworks
+      POSTGRES_PASSWORD: otterworks_dev
+      POSTGRES_DB: otterworks
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: collab-service
+      HTTP_PORT: 8084
+      JWT_SECRET: ${JWT_SECRET:-otterworks-local-dev-jwt-secret-change-me-in-production}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8084/health
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    container_name: otterworks-notification-service
+    ports:
+    - 8086:8086
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: otterworks
+      POSTGRES_PASSWORD: otterworks_dev
+      POSTGRES_DB: otterworks
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: notification-service
+      SQS_QUEUE_URL: http://localstack:4566/000000000000/otterworks-notifications
+      SNS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:otterworks-events
+      DYNAMODB_TABLE_NOTIFICATIONS: otterworks-notifications
+      DYNAMODB_TABLE_PREFERENCES: otterworks-notification-preferences
+      JWT_SECRET: ${JWT_SECRET:-otterworks-local-dev-jwt-secret-change-me-in-production}
+    depends_on:
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8086/health
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
+  search-service:
+    build:
+      context: ./services/search-service
+      dockerfile: Dockerfile
+    container_name: otterworks-search-service
+    ports:
+    - 8087:8087
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: otterworks
+      POSTGRES_PASSWORD: otterworks_dev
+      POSTGRES_DB: otterworks
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MEILISEARCH_URL: http://meilisearch:7700
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: search-service
+      SQS_ENABLED: 'true'
+      SQS_QUEUE_URL: http://localstack:4566/000000000000/otterworks-search-events
+      JWT_SECRET: ${JWT_SECRET:-otterworks-local-dev-jwt-secret-change-me-in-production}
+    depends_on:
+      meilisearch:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8087/health
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
+  analytics-service:
+    build:
+      context: ./services/analytics-service
+      dockerfile: Dockerfile
+    container_name: otterworks-analytics-service
+    ports:
+    - 8088:8088
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: otterworks
+      POSTGRES_PASSWORD: otterworks_dev
+      POSTGRES_DB: otterworks
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: analytics-service
+      S3_DATA_LAKE_BUCKET: otterworks-data-lake
+      JWT_SECRET: ${JWT_SECRET:-otterworks-local-dev-jwt-secret-change-me-in-production}
+    depends_on:
+      localstack:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8088/health
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
+  admin-service:
+    build:
+      context: ./services/admin-service
+      dockerfile: Dockerfile
+    container_name: otterworks-admin-service
+    ports:
+    - 8089:8089
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: otterworks
+      POSTGRES_PASSWORD: otterworks_dev
+      POSTGRES_DB: otterworks
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: admin-service
+      RAILS_ENV: development
+      JWT_SECRET: ${JWT_SECRET:-otterworks-local-dev-jwt-secret-change-me-in-production}
+      DATABASE_URL: postgres://otterworks:otterworks_dev@postgres:5432/otterworks
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: otterworks
+      DATABASE_PASSWORD: otterworks_dev
+      SECRET_KEY_BASE: dev-secret-key-base-otterworks-change-in-production
+      DEVIN_API_KEY: ${DEVIN_API_KEY:-}
+      DEVIN_ORG_ID: ${DEVIN_ORG_ID:-}
+      ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:-demo-alert-secret}
+      CHAOS_SECRET: ${CHAOS_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8089/health
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp
+    - /app/tmp:uid=1001,gid=1001
+    - /app/log:uid=1001,gid=1001
+  report-service:
+    build:
+      context: ./services/report-service
+      dockerfile: Dockerfile
+    container_name: otterworks-report-service
+    ports:
+    - 8091:8091
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: otterworks
+      POSTGRES_PASSWORD: otterworks_dev
+      POSTGRES_DB: otterworks
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: report-service
+      DB_HOST: postgres
+      JWT_SECRET: ${JWT_SECRET:-otterworks-local-dev-jwt-secret-change-me-in-production}
+      DB_PORT: 5432
+      DB_NAME: otterworks_reports
+      DB_USER: otterworks
+      DB_PASSWORD: otterworks_dev
+      ANALYTICS_SERVICE_URL: http://analytics-service:8088
+      AUDIT_SERVICE_URL: http://audit-service:8090
+      AUTH_SERVICE_URL: http://auth-service:8081
+      REPORT_OUTPUT_DIR: /tmp/reports
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8091/health
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
+  audit-service:
+    build:
+      context: ./services/audit-service
+      dockerfile: Dockerfile
+    container_name: otterworks-audit-service
+    ports:
+    - 8090:8090
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: otterworks
+      POSTGRES_PASSWORD: otterworks_dev
+      POSTGRES_DB: otterworks
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: audit-service
+      DYNAMODB_TABLE: otterworks-audit-events
+      Aws__EndpointUrl: http://localstack:4566
+      Aws__DynamoDbTable: otterworks-audit-events
+      Aws__S3ArchiveBucket: otterworks-audit-archive
+      ASPNETCORE_URLS: http://+:8090
+      JWT_SECRET: ${JWT_SECRET:-otterworks-local-dev-jwt-secret-change-me-in-production}
+    depends_on:
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8090/health
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
+  web-app:
+    build:
+      context: ./frontend/client-app
+      dockerfile: Dockerfile
+      args:
+        VITE_COLLAB_WS_URL: ws://localhost:8084
+    container_name: otterworks-web-app
+    ports:
+    - 3000:3000
+    environment:
+      API_GATEWAY_URL: http://api-gateway:8080
+    depends_on:
+    - api-gateway
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
+    volumes:
+    # Writable tmpfs so the unprivileged nginx entrypoint (uid 101) can render
+    # the envsubst config template despite the read-only root filesystem.
+    - type: tmpfs
+      target: /etc/nginx/conf.d
+      tmpfs:
+        mode: 0777
+  admin-dashboard:
+    build:
+      context: ./frontend/admin-dashboard
+      dockerfile: Dockerfile
+    container_name: otterworks-admin-dashboard
+    ports:
+    - 4200:4200
+    environment:
+      API_URL: http://localhost:8080
+    depends_on:
+    - api-gateway
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
+networks:
+  default:
+    name: otterworks-network
+volumes:
+  postgres_data: null
+  localstack_data: null
+

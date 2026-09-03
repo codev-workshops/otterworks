@@ -1,0 +1,74 @@
+replicaCount: 1
+
+image:
+  repository: <AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/workshop/otterworks-api-gateway
+  tag: ""  # Set at deploy time (ECR uses IMMUTABLE tags)
+  pullPolicy: IfNotPresent
+
+# ClusterIP only. A LoadBalancer Service makes the AWS cloud-controller create
+# an ELB that Terraform does not track, which is stranded (and billed) forever
+# if the Service or the cluster is deleted while the controller is not running.
+# External access goes through the single shared ingress-nginx controller.
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: otterworks.workshop.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: otterworks-tls
+      hosts:
+        - otterworks.workshop.example.com
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+healthCheck:
+  path: /health
+  port: 8080
+
+monitoring:
+  enabled: true
+  path: /metrics
+  port: 8080
+
+env:
+  AUTH_SERVICE_URL: "http://auth-service:8081"
+  FILE_SERVICE_URL: "http://file-service:8082"
+  DOCUMENT_SERVICE_URL: "http://document-service:8083"
+  COLLAB_SERVICE_URL: "http://collab-service:8084"
+  NOTIFICATION_SERVICE_URL: "http://notification-service:8086"
+  SEARCH_SERVICE_URL: "http://search-service:8087"
+  ANALYTICS_SERVICE_URL: "http://analytics-service:8088"
+  ADMIN_SERVICE_URL: "http://admin-service:8089"
+  AUDIT_SERVICE_URL: "http://audit-service:8090"
+
+networkPolicy:
+  enabled: true
+  ingressNamespace: ingress-nginx
+  monitoringNamespace: monitoring
+
+serviceAccount:
+  roleArn: ""
+
+# Non-sensitive service configuration rendered into {{ .Release.Name }}-config
+# and injected via envFrom. Populate at deploy time (e.g. from Terraform outputs).
+config: {}
+
+# Sensitive configuration rendered into {{ .Release.Name }}-secrets (Opaque,
+# stringData) and injected via envFrom. Populate at deploy time; never commit values.
+secrets: {}
