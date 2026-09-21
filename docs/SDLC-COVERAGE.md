@@ -228,14 +228,21 @@ generation / image signing (cosign).
 - Black-box **API flow tests** in `tests/api/` (auth, file, document, collaboration, websocket,
   search, audit/analytics/report, notification/admin/gateway, degradation, side-effect flows).
 - **Contract tests** in `tests/contract/` plus API/event contracts in `shared/openapi/` and
-  `shared/events/schemas/`.
+  `shared/events/schemas/`. `test_search_contract.py` validates a live search-service against
+  its OpenAPI spec; `test_event_contracts.py` (`make test-contract-events`) validates static
+  file-service and document-service SNS payload fixtures against the draft-07 event schemas,
+  asserts every emitted event type has a schema definition (and vice versa), and documents the
+  collab/audit/notification schemas as WebSocket or consumer-side shapes with no SNS producer.
+  See `docs/EVENT_CONTRACT_DRIFT.md` for the reconciled drifts.
 - **Testdata harness** under `testdata/` (generated + harness) with namespaced Postgres schemas
   (see `.agents/skills/synthetic-testdata-generation`).
 
 **Gap / what a demo needs.** `shared/proto/` is a **README stub** (no protobuf/gRPC contracts
-despite the architecture referencing them); `shared/openapi/` covers only 3 of 11 services. No
-enforced coverage thresholds; no load/perf tests; the API flow suite is `--collect-only` in CI
-(imports validated, not executed against a live stack).
+despite the architecture referencing them); `shared/openapi/` covers only 3 of 11 services;
+event-contract validation is fixture-based (no live SNS/localstack capture in CI — set
+`EVENT_CONTRACT_SAMPLES_DIR` to validate captured messages). No enforced coverage thresholds;
+no load/perf tests; the API flow suite is `--collect-only` in CI (imports validated, not
+executed against a live stack).
 
 ## 7. Security / SAST / DAST / dependency scanning — Present (standout)
 

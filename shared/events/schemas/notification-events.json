@@ -1,7 +1,25 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "OtterWorks Notification Events",
+  "title": "OtterWorks Notification Events (inbound contract + unproduced outbound shapes)",
+  "description": "notification-service is a CONSUMER of bus events: services/notification-service/src/main/kotlin/com/otterworks/notification/consumer/SqsConsumer.kt decodes each SQS body (optionally SNS-wrapped) into the camelCase `SqsNotificationMessage` defined below (model/NotificationEvent.kt) and only acts on eventType in {file_shared, comment_added, document_edited, user_mentioned}. The service has no SNS/SQS publisher, so NotificationSent/Read/Failed are outbound shapes that nothing currently produces; they are kept as documentation only. Note: the wire format consumed today is camelCase and does not match the snake_case document-service envelope, so comment_added from document-service is not decodable by this consumer (see docs/labs/contract-audit-guide.md).",
   "definitions": {
+    "SqsNotificationMessage": {
+      "description": "Inbound message shape decoded by SqsConsumer (kotlinx.serialization, ignoreUnknownKeys). Only eventType and timestamp are required; the others default to empty strings.",
+      "type": "object",
+      "required": ["eventType", "timestamp"],
+      "properties": {
+        "eventType": { "enum": ["file_shared", "comment_added", "document_edited", "user_mentioned"] },
+        "fileId": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "sharedWithUserId": { "type": "string" },
+        "documentId": { "type": "string" },
+        "commentId": { "type": "string" },
+        "userId": { "type": "string" },
+        "actorId": { "type": "string" },
+        "mentionedUserId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
     "NotificationSentEvent": {
       "type": "object",
       "required": ["eventType", "notificationId", "userId", "type", "channel", "timestamp"],

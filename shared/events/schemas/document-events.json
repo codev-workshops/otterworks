@@ -1,47 +1,101 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "OtterWorks Document Events",
+  "description": "Events published to SNS by document-service (services/document-service/app/services/event_publisher.py). Every message is a snake_case envelope {event_type, timestamp, payload}; the payload shape depends on event_type and is built in services/document-service/app/services/document_service.py. The event_type is also set as the `event_type` SNS message attribute.",
   "definitions": {
-    "DocumentCreatedEvent": {
+    "Envelope": {
       "type": "object",
-      "required": ["eventType", "documentId", "title", "ownerId", "timestamp"],
+      "required": ["event_type", "timestamp", "payload"],
       "properties": {
-        "eventType": { "const": "document_created" },
-        "documentId": { "type": "string", "format": "uuid" },
-        "title": { "type": "string" },
-        "ownerId": { "type": "string", "format": "uuid" },
-        "folderId": { "type": "string", "format": "uuid" },
-        "contentType": { "type": "string", "default": "text/markdown" },
-        "timestamp": { "type": "string", "format": "date-time" }
-      }
+        "event_type": {
+          "enum": ["document_created", "document_updated", "document_deleted", "comment_added"]
+        },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "payload": { "type": "object" }
+      },
+      "additionalProperties": false
     },
-    "DocumentEditedEvent": {
+    "DocumentIndexPayload": {
+      "description": "Built by _document_index_payload(); mirrors the search-service document index shape.",
       "type": "object",
-      "required": ["eventType", "documentId", "editedBy", "timestamp"],
+      "required": ["id", "title", "content", "owner_id", "tags", "created_at", "updated_at"],
       "properties": {
-        "eventType": { "const": "document_edited" },
-        "documentId": { "type": "string", "format": "uuid" },
-        "editedBy": { "type": "string", "format": "uuid" },
-        "versionNumber": { "type": "integer" },
-        "wordCount": { "type": "integer" },
-        "timestamp": { "type": "string", "format": "date-time" }
-      }
+        "id": { "type": "string", "format": "uuid" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "owner_id": { "type": "string", "format": "uuid" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "restored_from": {
+          "description": "Only present on document_updated emitted by a version restore.",
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DocumentCreatedEvent": {
+      "allOf": [
+        { "$ref": "#/definitions/Envelope" },
+        {
+          "properties": {
+            "event_type": { "const": "document_created" },
+            "payload": { "$ref": "#/definitions/DocumentIndexPayload" }
+          }
+        }
+      ]
+    },
+    "DocumentUpdatedEvent": {
+      "description": "Emitted on update, patch and version restore (restore adds payload.restored_from).",
+      "allOf": [
+        { "$ref": "#/definitions/Envelope" },
+        {
+          "properties": {
+            "event_type": { "const": "document_updated" },
+            "payload": { "$ref": "#/definitions/DocumentIndexPayload" }
+          }
+        }
+      ]
+    },
+    "DocumentDeletedEvent": {
+      "allOf": [
+        { "$ref": "#/definitions/Envelope" },
+        {
+          "properties": {
+            "event_type": { "const": "document_deleted" },
+            "payload": {
+              "type": "object",
+              "required": ["id", "type"],
+              "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "type": { "const": "document" }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
     },
     "CommentAddedEvent": {
-      "type": "object",
-      "required": ["eventType", "documentId", "commentId", "authorId", "timestamp"],
-      "properties": {
-        "eventType": { "const": "comment_added" },
-        "documentId": { "type": "string", "format": "uuid" },
-        "commentId": { "type": "string", "format": "uuid" },
-        "authorId": { "type": "string", "format": "uuid" },
-        "content": { "type": "string" },
-        "mentionedUserIds": {
-          "type": "array",
-          "items": { "type": "string", "format": "uuid" }
-        },
-        "timestamp": { "type": "string", "format": "date-time" }
-      }
+      "allOf": [
+        { "$ref": "#/definitions/Envelope" },
+        {
+          "properties": {
+            "event_type": { "const": "comment_added" },
+            "payload": {
+              "type": "object",
+              "required": ["comment_id", "document_id", "author_id"],
+              "properties": {
+                "comment_id": { "type": "string", "format": "uuid" },
+                "document_id": { "type": "string", "format": "uuid" },
+                "author_id": { "type": "string", "format": "uuid" }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
     }
   }
 }

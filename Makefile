@@ -190,6 +190,12 @@ test-api-flows: ## Run black-box API flow tests against the local API gateway
 test-api-flows-collect: ## Collect black-box API flow tests without running them
 	UV_PROJECT_ENVIRONMENT=.venv uv run python -m pytest tests/api --collect-only -q
 
+test-contract-search: ## Contract-test a running search-service against shared/openapi (SEARCH_SERVICE_URL=...)
+	python3 -m pytest tests/contract/test_search_contract.py -v
+
+test-contract-events: ## Validate SNS event payload fixtures against shared/events/schemas (no infra needed)
+	python3 -m pytest tests/contract/test_event_contracts.py -v
+
 lint: ## Lint all services
 	@echo "=== API Gateway ===" && cd services/api-gateway && golangci-lint run
 	@echo "=== Auth Service ===" && cd services/auth-service && ./gradlew spotlessCheck
