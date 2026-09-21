@@ -274,6 +274,17 @@ paths:
       responses:
         "204":
           description: Preferences updated
+        "500":
+          description: |
+            Malformed or missing request body. Ktor's receive() failure is
+            caught by the global StatusPages handler (Application.kt), which
+            maps every Throwable to 500 rather than 400.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Internal server error"
 
   /health:
     get:

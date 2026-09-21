@@ -34,6 +34,30 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: title
+          in: query
+          required: false
+          description: Case-insensitive substring match on the document title
+          schema:
+            type: string
+        - name: content_type
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: sort
+          in: query
+          required: false
+          description: Sort column (default updated_at)
+          schema:
+            type: string
+            default: updated_at
+        - name: direction
+          in: query
+          required: false
+          schema:
+            type: string
+            default: desc
         - name: page
           in: query
           required: false
@@ -58,6 +82,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DocumentListResponse"
+        "400":
+          description: Invalid filter (unknown sort column or direction)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
     post:
       operationId: createDocument
       summary: Create a new document
@@ -134,6 +170,86 @@ paths:
                 $ref: "#/components/schemas/DocumentListResponse"
         "422":
           description: Validation error (empty query)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+
+  /api/v1/documents/exports:
+    get:
+      operationId: readExport
+      summary: Read a previously rendered export from the export archive
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Archived export content
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: Export not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                detail: "Export not found"
+        "422":
+          description: Validation error (missing or empty name)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+
+  /api/v1/documents/shared:
+    get:
+      operationId: getSharedDocument
+      summary: Read a document through its read-only share link
+      parameters:
+        - name: document_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Shared document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+        "403":
+          description: Invalid share token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                detail: "Invalid share token"
+        "404":
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                detail: "Document not found"
+        "422":
+          description: Validation error (missing document_id or token)
           content:
             application/json:
               schema:
@@ -438,6 +554,51 @@ paths:
               schema:
                 type: string
                 format: binary
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Access denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation error (format not one of pdf, html, markdown)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+
+  /api/v1/documents/{document_id}/share:
+    post:
+      operationId: createShareLink
+      summary: Mint a read-only share link for a document
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Share link minted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareLinkResponse"
         "401":
           description: Authentication required
           content:
@@ -810,6 +971,18 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    ShareLinkResponse:
+      type: object
+      required:
+        - document_id
+        - token
+      properties:
+        document_id:
+          type: string
+          format: uuid
+        token:
+          type: string
 
     DocumentListResponse:
       type: object

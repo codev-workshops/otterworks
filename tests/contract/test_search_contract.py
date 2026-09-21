@@ -12,104 +12,29 @@ Requirements:
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Any
 
 import pytest
 import requests
-import yaml
-from jsonschema import validate
 
-SPEC_PATH = Path(__file__).resolve().parents[2] / "shared" / "openapi" / "search-service.yaml"
-BASE_URL = os.environ.get("SEARCH_SERVICE_URL", "http://localhost:8087")
+from tests.contract._openapi_utils import (
+    load_spec,
+    require_live_service,
+    service_base_url,
+    validate_response,
+)
+
+BASE_URL = service_base_url("SEARCH_SERVICE_URL", "http://localhost:8087")
+
+require_live_service(BASE_URL, "SEARCH_SERVICE_URL")
+
+_validate_response = validate_response
 
 
 @pytest.fixture(scope="session")
 def openapi_spec() -> dict[str, Any]:
     """Load and return the OpenAPI spec as a dict."""
-    with open(SPEC_PATH) as f:
-        spec = yaml.safe_load(f)
-    assert spec.get("openapi", "").startswith("3.0"), "Expected OpenAPI 3.0.x spec"
-    return spec
-
-
-def _resolve_ref(spec: dict[str, Any], ref: str) -> dict[str, Any]:
-    """Resolve a JSON $ref pointer within the spec."""
-    parts = ref.lstrip("#/").split("/")
-    node = spec
-    for part in parts:
-        node = node[part]
-    return node
-
-
-def _get_response_schema(
-    spec: dict[str, Any], path: str, method: str, status_code: str
-) -> dict[str, Any] | None:
-    """Extract the JSON schema for a given path/method/status response."""
-    path_item = spec.get("paths", {}).get(path)
-    if not path_item:
-        return None
-    operation = path_item.get(method)
-    if not operation:
-        return None
-    response = operation.get("responses", {}).get(status_code)
-    if not response:
-        return None
-    content = response.get("content", {}).get("application/json", {})
-    schema = content.get("schema")
-    if not schema:
-        return None
-    if "$ref" in schema:
-        schema = _resolve_ref(spec, schema["$ref"])
-    return schema
-
-
-def _resolve_schema_refs(spec: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
-    """Recursively resolve all $ref in a schema for validation."""
-    if "$ref" in schema:
-        return _resolve_schema_refs(spec, _resolve_ref(spec, schema["$ref"]))
-
-    resolved = dict(schema)
-
-    if "properties" in resolved:
-        resolved["properties"] = {
-            k: _resolve_schema_refs(spec, v)
-            for k, v in resolved["properties"].items()
-        }
-
-    if "items" in resolved:
-        resolved["items"] = _resolve_schema_refs(spec, resolved["items"])
-
-    if "additionalProperties" in resolved and isinstance(resolved["additionalProperties"], dict):
-        resolved["additionalProperties"] = _resolve_schema_refs(
-            spec, resolved["additionalProperties"]
-        )
-
-    if "allOf" in resolved:
-        resolved["allOf"] = [_resolve_schema_refs(spec, s) for s in resolved["allOf"]]
-
-    if "oneOf" in resolved:
-        resolved["oneOf"] = [_resolve_schema_refs(spec, s) for s in resolved["oneOf"]]
-
-    if "anyOf" in resolved:
-        resolved["anyOf"] = [_resolve_schema_refs(spec, s) for s in resolved["anyOf"]]
-
-    return resolved
-
-
-def _validate_response(
-    spec: dict[str, Any],
-    response_json: Any,
-    path: str,
-    method: str,
-    status_code: str,
-) -> None:
-    """Validate a response body against the spec schema."""
-    schema = _get_response_schema(spec, path, method, status_code)
-    assert schema is not None, f"No schema found for {method.upper()} {path} -> {status_code}"
-    resolved = _resolve_schema_refs(spec, schema)
-    validate(instance=response_json, schema=resolved)
+    return load_spec("search-service")
 
 
 class TestSearchEndpoint:

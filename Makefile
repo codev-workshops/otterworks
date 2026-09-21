@@ -190,6 +190,23 @@ test-api-flows: ## Run black-box API flow tests against the local API gateway
 test-api-flows-collect: ## Collect black-box API flow tests without running them
 	UV_PROJECT_ENVIRONMENT=.venv uv run python -m pytest tests/api --collect-only -q
 
+# Contract tests validate live services against shared/openapi/*.yaml. Each
+# module reads its base URL from <SERVICE>_URL (defaults below) and skips itself
+# when that address does not accept connections, so this target is safe to run
+# without a stack. CONTRACT_SERVICES narrows the run, e.g.
+#   make test-contract CONTRACT_SERVICES="document notification"
+CONTRACT_SERVICES ?= search document notification
+SEARCH_SERVICE_URL ?= http://localhost:8087
+DOCUMENT_SERVICE_URL ?= http://localhost:8083
+NOTIFICATION_SERVICE_URL ?= http://localhost:8086
+export SEARCH_SERVICE_URL DOCUMENT_SERVICE_URL NOTIFICATION_SERVICE_URL
+
+test-contract: ## Run OpenAPI contract tests against live services (CONTRACT_SERVICES="search document notification")
+	python -m pytest $(foreach s,$(CONTRACT_SERVICES),tests/contract/test_$(s)_contract.py) -v
+
+test-contract-collect: ## Collect contract tests without running them
+	python -m pytest tests/contract --collect-only -q
+
 lint: ## Lint all services
 	@echo "=== API Gateway ===" && cd services/api-gateway && golangci-lint run
 	@echo "=== Auth Service ===" && cd services/auth-service && ./gradlew spotlessCheck
