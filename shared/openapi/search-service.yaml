@@ -294,6 +294,12 @@ paths:
               example:
                 error: "Failed to index file"
 
+  # Contract note: the implementation registers a single templated handler,
+  # DELETE /api/v1/search/index/<doc_type>/<doc_id> (app/api/index.py), and
+  # rejects any doc_type other than "document" / "file" with a 400. The two
+  # concrete paths below are the only valid instantiations of that template,
+  # so they are kept as-is; tests/contract/test_search_contract.py's path
+  # allowlist expects both.
   /api/v1/search/index/document/{id}:
     delete:
       operationId: removeDocument
@@ -624,6 +630,11 @@ components:
           type: string
           description: The search query that was executed
 
+    # Contract note: suggestions is intentionally an array of strings. When
+    # the chaos flag chaos:search-service:suggest_500 is set, the handler
+    # takes a deliberately broken ranking path (app/api/search.py) that
+    # returns raw objects or crashes with a 500. That is planted lab
+    # behaviour, not the contract; do not widen this schema to match it.
     SuggestResponse:
       type: object
       required:

@@ -227,13 +227,20 @@ generation / image signing (cosign).
   `cargo test`, Python `pytest`, Scala `sbt test`, Ruby `rspec`, C# `dotnet test`).
 - Black-box **API flow tests** in `tests/api/` (auth, file, document, collaboration, websocket,
   search, audit/analytics/report, notification/admin/gateway, degradation, side-effect flows).
-- **Contract tests** in `tests/contract/` plus API/event contracts in `shared/openapi/` and
+- **Contract tests** in `tests/contract/` for search-service, document-service and
+  notification-service (`make test-contract`; each module skips itself when its
+  `<SERVICE>_URL` is not reachable, `make test-contract-collect` for CI without a stack).
+  Response bodies are validated with `jsonschema` against `shared/openapi/*.yaml`; the
+  document-service module additionally diffs the live FastAPI `/openapi.json` route list
+  against the shared spec so undocumented endpoints fail the build. Event contracts live in
   `shared/events/schemas/`.
 - **Testdata harness** under `testdata/` (generated + harness) with namespaced Postgres schemas
   (see `.agents/skills/synthetic-testdata-generation`).
 
 **Gap / what a demo needs.** `shared/proto/` is a **README stub** (no protobuf/gRPC contracts
-despite the architecture referencing them); `shared/openapi/` covers only 3 of 11 services. No
+despite the architecture referencing them); `shared/openapi/` covers only 3 of 11 services,
+though all 3 now have live contract tests (`docs/labs/contract-drift-report.md` records the
+spec corrections). No
 enforced coverage thresholds; no load/perf tests; the API flow suite is `--collect-only` in CI
 (imports validated, not executed against a live stack).
 
