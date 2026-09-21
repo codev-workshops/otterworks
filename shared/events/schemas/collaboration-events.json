@@ -1,83 +1,64 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "OtterWorks Collaboration Events",
+  "title": "OtterWorks Collaboration WebSocket Messages",
+  "description": "Real-time presence messages broadcast by collab-service over Socket.IO document rooms (`doc:<documentId>`), see services/collab-service/src/handlers/collaboration.ts. These are NOT SNS/SQS bus events: collab-service has no SNS producer, and the Socket.IO event name (e.g. 'user-joined') is carried by the transport rather than as an eventType field in the payload. Each definition below documents the payload of one Socket.IO event; the `x-socketio-event` keyword records the event name.",
   "definitions": {
-    "UserJoinedEvent": {
+    "CursorPosition": {
       "type": "object",
-      "required": ["eventType", "sessionId", "documentId", "userId", "timestamp"],
+      "required": ["index", "length"],
       "properties": {
-        "eventType": { "const": "user_joined" },
-        "sessionId": { "type": "string", "format": "uuid" },
-        "documentId": { "type": "string", "format": "uuid" },
-        "userId": { "type": "string", "format": "uuid" },
+        "index": { "type": "integer", "minimum": 0 },
+        "length": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "UserJoinedMessage": {
+      "x-socketio-event": "user-joined",
+      "type": "object",
+      "required": ["userId", "displayName", "color", "socketId"],
+      "properties": {
+        "userId": { "type": "string" },
         "displayName": { "type": "string" },
         "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
-        "timestamp": { "type": "string", "format": "date-time" }
-      }
+        "socketId": { "type": "string" }
+      },
+      "additionalProperties": false
     },
-    "UserLeftEvent": {
+    "UserLeftMessage": {
+      "x-socketio-event": "user-left",
       "type": "object",
-      "required": ["eventType", "sessionId", "documentId", "userId", "timestamp"],
+      "required": ["socketId", "userId"],
       "properties": {
-        "eventType": { "const": "user_left" },
-        "sessionId": { "type": "string", "format": "uuid" },
-        "documentId": { "type": "string", "format": "uuid" },
-        "userId": { "type": "string", "format": "uuid" },
-        "reason": { "enum": ["navigated_away", "idle_timeout", "disconnected"] },
-        "timestamp": { "type": "string", "format": "date-time" }
-      }
+        "socketId": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "additionalProperties": false
     },
-    "CursorMovedEvent": {
+    "CursorUpdateMessage": {
+      "x-socketio-event": "cursor-update",
       "type": "object",
-      "required": ["eventType", "sessionId", "documentId", "userId", "position", "timestamp"],
+      "required": ["socketId", "userId", "displayName", "color", "cursor", "selection"],
       "properties": {
-        "eventType": { "const": "cursor_moved" },
-        "sessionId": { "type": "string", "format": "uuid" },
-        "documentId": { "type": "string", "format": "uuid" },
-        "userId": { "type": "string", "format": "uuid" },
-        "position": {
-          "type": "object",
-          "required": ["line", "column"],
-          "properties": {
-            "line": { "type": "integer", "minimum": 0 },
-            "column": { "type": "integer", "minimum": 0 }
-          }
-        },
-        "timestamp": { "type": "string", "format": "date-time" }
-      }
+        "socketId": { "type": "string" },
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "cursor": { "oneOf": [{ "$ref": "#/definitions/CursorPosition" }, { "type": "null" }] },
+        "selection": { "oneOf": [{ "$ref": "#/definitions/CursorPosition" }, { "type": "null" }] }
+      },
+      "additionalProperties": false
     },
-    "SelectionChangedEvent": {
+    "TypingIndicatorMessage": {
+      "x-socketio-event": "typing-indicator",
       "type": "object",
-      "required": ["eventType", "sessionId", "documentId", "userId", "selection", "timestamp"],
+      "required": ["socketId", "userId", "displayName", "isTyping"],
       "properties": {
-        "eventType": { "const": "selection_changed" },
-        "sessionId": { "type": "string", "format": "uuid" },
-        "documentId": { "type": "string", "format": "uuid" },
-        "userId": { "type": "string", "format": "uuid" },
-        "selection": {
-          "type": "object",
-          "required": ["anchor", "head"],
-          "properties": {
-            "anchor": {
-              "type": "object",
-              "required": ["line", "column"],
-              "properties": {
-                "line": { "type": "integer", "minimum": 0 },
-                "column": { "type": "integer", "minimum": 0 }
-              }
-            },
-            "head": {
-              "type": "object",
-              "required": ["line", "column"],
-              "properties": {
-                "line": { "type": "integer", "minimum": 0 },
-                "column": { "type": "integer", "minimum": 0 }
-              }
-            }
-          }
-        },
-        "timestamp": { "type": "string", "format": "date-time" }
-      }
+        "socketId": { "type": "string" },
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "isTyping": { "type": "boolean" }
+      },
+      "additionalProperties": false
     }
   }
 }

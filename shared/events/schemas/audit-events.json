@@ -1,7 +1,22 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "OtterWorks Audit Events",
+  "title": "OtterWorks Audit Events (inbound contracts)",
+  "description": "audit-service is a CONSUMER, not a producer, of bus events: services/audit-service/src/Services/SnsConsumer.cs reads its SQS queue, handles file-service `file_shared` events (see file-events.json) and otherwise deserializes the body as the generic `AuditEventMessage` defined below. The Entity*/Access* definitions are aspirational inbound contracts that no OtterWorks service currently produces; they are kept for documentation and consumer-side validation only and are unchanged here.",
   "definitions": {
+    "AuditEventMessage": {
+      "description": "Generic inbound message actually deserialized by SnsConsumer (case-insensitive property matching); every field is optional and defaulted by the consumer.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "action": { "type": "string" },
+        "resourceType": { "type": "string" },
+        "resourceId": { "type": "string" },
+        "details": { "type": "object", "additionalProperties": { "type": "string" } },
+        "ipAddress": { "type": "string" },
+        "userAgent": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
     "EntityCreatedEvent": {
       "type": "object",
       "required": ["eventType", "auditId", "entityType", "entityId", "actorId", "timestamp"],

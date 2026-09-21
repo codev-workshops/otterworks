@@ -1,43 +1,90 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "OtterWorks File Events",
+  "description": "Events published to SNS by file-service (services/file-service/src/events.rs). Every event is the flat, camelCase serialization of the FileEvent struct. `folderId` and `sharedWithUserId` are serialized as null when unset; `name`, `mimeType` and `sizeBytes` are omitted entirely when unset (skip_serializing_if) and are only populated by file_uploaded / file_restored / file_updated.",
   "definitions": {
-    "FileUploadedEvent": {
+    "FileEventBase": {
       "type": "object",
-      "required": ["eventType", "fileId", "fileName", "ownerId", "mimeType", "sizeBytes", "timestamp"],
+      "required": ["eventType", "fileId", "ownerId", "timestamp"],
       "properties": {
-        "eventType": { "const": "file_uploaded" },
+        "eventType": {
+          "enum": [
+            "file_uploaded",
+            "file_deleted",
+            "file_shared",
+            "file_trashed",
+            "file_restored",
+            "file_updated",
+            "file_moved"
+          ]
+        },
         "fileId": { "type": "string", "format": "uuid" },
-        "fileName": { "type": "string" },
         "ownerId": { "type": "string", "format": "uuid" },
-        "folderId": { "type": "string", "format": "uuid" },
+        "folderId": { "type": ["string", "null"], "format": "uuid" },
+        "sharedWithUserId": { "type": ["string", "null"], "format": "uuid" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "name": { "type": "string" },
         "mimeType": { "type": "string" },
-        "sizeBytes": { "type": "integer" },
-        "s3Key": { "type": "string" },
-        "timestamp": { "type": "string", "format": "date-time" }
-      }
+        "sizeBytes": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
     },
-    "FileSharedEvent": {
-      "type": "object",
-      "required": ["eventType", "fileId", "ownerId", "sharedWithUserId", "permission", "timestamp"],
-      "properties": {
-        "eventType": { "const": "file_shared" },
-        "fileId": { "type": "string", "format": "uuid" },
-        "ownerId": { "type": "string", "format": "uuid" },
-        "sharedWithUserId": { "type": "string", "format": "uuid" },
-        "permission": { "enum": ["viewer", "editor"] },
-        "timestamp": { "type": "string", "format": "date-time" }
-      }
+    "FileUploadedEvent": {
+      "allOf": [
+        { "$ref": "#/definitions/FileEventBase" },
+        {
+          "required": ["name", "mimeType", "sizeBytes"],
+          "properties": { "eventType": { "const": "file_uploaded" } }
+        }
+      ]
     },
     "FileDeletedEvent": {
-      "type": "object",
-      "required": ["eventType", "fileId", "deletedBy", "timestamp"],
-      "properties": {
-        "eventType": { "const": "file_deleted" },
-        "fileId": { "type": "string", "format": "uuid" },
-        "deletedBy": { "type": "string", "format": "uuid" },
-        "timestamp": { "type": "string", "format": "date-time" }
-      }
+      "allOf": [
+        { "$ref": "#/definitions/FileEventBase" },
+        { "properties": { "eventType": { "const": "file_deleted" } } }
+      ]
+    },
+    "FileSharedEvent": {
+      "allOf": [
+        { "$ref": "#/definitions/FileEventBase" },
+        {
+          "required": ["sharedWithUserId"],
+          "properties": {
+            "eventType": { "const": "file_shared" },
+            "sharedWithUserId": { "type": "string", "format": "uuid" }
+          }
+        }
+      ]
+    },
+    "FileTrashedEvent": {
+      "allOf": [
+        { "$ref": "#/definitions/FileEventBase" },
+        { "properties": { "eventType": { "const": "file_trashed" } } }
+      ]
+    },
+    "FileRestoredEvent": {
+      "allOf": [
+        { "$ref": "#/definitions/FileEventBase" },
+        {
+          "required": ["name", "mimeType", "sizeBytes"],
+          "properties": { "eventType": { "const": "file_restored" } }
+        }
+      ]
+    },
+    "FileUpdatedEvent": {
+      "allOf": [
+        { "$ref": "#/definitions/FileEventBase" },
+        {
+          "required": ["name", "mimeType", "sizeBytes"],
+          "properties": { "eventType": { "const": "file_updated" } }
+        }
+      ]
+    },
+    "FileMovedEvent": {
+      "allOf": [
+        { "$ref": "#/definitions/FileEventBase" },
+        { "properties": { "eventType": { "const": "file_moved" } } }
+      ]
     }
   }
 }
