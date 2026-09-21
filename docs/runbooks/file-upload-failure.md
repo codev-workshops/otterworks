@@ -23,11 +23,26 @@
    redis-cli EXISTS chaos:file-service:upload_s3_error
    ```
 
-<!-- TODO: Complete investigation steps -->
+3. Compare the bucket the pod is configured with against the bucket Terraform created:
+   ```
+   kubectl get deploy file-service -n otterworks -o jsonpath='{.spec.template.spec.containers[0].env}' | grep -o '"S3_BUCKET"[^}]*'
+   terraform -chdir=infrastructure/terraform output s3_file_bucket
+   ```
+4. Check recent Helm history for a config override on the release:
+   ```
+   helm history file-service -n otterworks
+   helm get values file-service -n otterworks | grep S3_BUCKET
+   ```
 
 ## Resolution Steps
 
-<!-- TODO -->
+1. If `S3_BUCKET` does not match the Terraform output, redeploy with the correct value
+   (`scripts/deploy-dev.sh` / `scripts/deploy-tenant.sh` derive it from Terraform outputs),
+   or `helm rollback file-service <REVISION> -n otterworks` to the last good revision.
+2. If the chaos flag is set, clear it: `scripts/inject-bug.sh <ID> reset`
+   (or `redis-cli DEL chaos:file-service:upload_s3_error`).
+3. Confirm recovery: the `FileUploadHighErrorRate` alert resolves and an upload via
+   `POST /api/v1/files` returns 201.
 
 ## Post-Incident
 
