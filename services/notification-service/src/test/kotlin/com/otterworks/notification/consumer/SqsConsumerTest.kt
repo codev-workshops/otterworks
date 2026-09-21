@@ -121,6 +121,17 @@ class SqsConsumerTest {
     }
 
     @Test
+    fun `parseMessage accepts legacy epoch integer timestamps`() {
+        val seconds = consumer.parseMessage("""{"eventType":"file_shared","fileId":"f-1","timestamp":1704067200}""")
+        assertNotNull(seconds)
+        assertEquals("2024-01-01T00:00:00Z", seconds.timestamp)
+
+        val millis = consumer.parseMessage("""{"eventType":"file_shared","fileId":"f-1","timestamp":1704067200000}""")
+        assertNotNull(millis)
+        assertEquals("2024-01-01T00:00:00Z", millis.timestamp)
+    }
+
+    @Test
     fun `parseMessage handles missing optional fields`() {
         val body = """
             {
