@@ -98,6 +98,18 @@ class TestSuggestEndpoint:
         data = response.get_json()
         assert len(data["suggestions"]) >= 1
 
+    def test_suggest_preserves_relevance_order(self, client, mock_meilisearch_client):
+        """Suggest returns titles in MeiliSearch relevance order without a 5xx."""
+        mock_index = mock_meilisearch_client.index.return_value
+        mock_index.search.return_value = {
+            "estimatedTotalHits": 2,
+            "hits": [{"title": "Quarterly Report"}, {"title": "Quarterly Plan"}],
+        }
+
+        response = client.get("/api/v1/search/suggest?q=qu")
+        assert response.status_code == 200
+        assert response.get_json()["suggestions"] == ["Quarterly Report", "Quarterly Plan"]
+
     def test_suggest_empty_query(self, client):
         """Suggest with empty query returns empty list."""
         response = client.get("/api/v1/search/suggest?q=")
