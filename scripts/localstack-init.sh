@@ -16,7 +16,18 @@ make_bucket otterworks-data-lake
 make_bucket otterworks-audit-archive
 
 # SQS Queue (create-queue is idempotent for an existing queue with the same name)
+awslocal sqs create-queue --queue-name otterworks-notifications-dlq
 awslocal sqs create-queue --queue-name otterworks-notifications
+NOTIFICATION_DLQ_ARN=$(awslocal sqs get-queue-attributes \
+  --queue-url http://localhost:4566/000000000000/otterworks-notifications-dlq \
+  --attribute-names QueueArn \
+  --query 'Attributes.QueueArn' \
+  --output text)
+# Mirror the Terraform redrive policy so unprocessable messages land in the DLQ
+# instead of cycling through the main queue forever.
+awslocal sqs set-queue-attributes \
+  --queue-url http://localhost:4566/000000000000/otterworks-notifications \
+  --attributes "{\"RedrivePolicy\":\"{\\\"deadLetterTargetArn\\\":\\\"$NOTIFICATION_DLQ_ARN\\\",\\\"maxReceiveCount\\\":\\\"3\\\"}\"}"
 awslocal sqs create-queue --queue-name otterworks-audit-events-queue
 awslocal sqs create-queue --queue-name otterworks-search-events
 
