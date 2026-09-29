@@ -26,6 +26,8 @@ private val redisPool: JedisPool by lazy {
     JedisPool(JedisPoolConfig(), host, port, 1000)
 }
 
+private const val STRICT_SCHEMA_FLAG = "chaos:notification-service:consumer_strict_schema"
+
 private fun chaosActive(flag: String): Boolean {
     return try {
         redisPool.resource.use { jedis -> jedis.exists(flag) }
@@ -39,6 +41,7 @@ class SqsConsumer(
     private val notificationService: NotificationService,
     private val config: AppConfig,
     meterRegistry: MeterRegistry? = null,
+    private val strictSchemaEnabled: () -> Boolean = { chaosActive(STRICT_SCHEMA_FLAG) },
 ) {
     private val processingErrorsCounter: Counter? =
         meterRegistry?.counter("notifications.processing.errors")
@@ -48,15 +51,12 @@ class SqsConsumer(
         isLenient = true
     }
 
-    // CHAOS: strict parser that rejects messages whose timestamp field is not
-    // a valid RFC 3339 string.  Legacy events emitted by older service versions
-    // use Unix epoch integers for timestamps, which are rejected here.
-    // When the chaos flag is active, every such message throws
-    // SerializationException, is never deleted from the queue, and becomes
-    // visible again after the SQS visibility timeout — causing queue depth to
-    // climb indefinitely while the consumer appears healthy.
+    // Strict (non-lenient) parser enabled by the consumer_strict_schema chaos flag.
+    // Unknown keys are still ignored: producers add fields (e.g. file-service's
+    // folderId/name/mimeType) and SNS envelopes carry Timestamp/Signature/etc.
+    // Legacy epoch timestamps are handled by FlexibleTimestampSerializer.
     private val strictJson = Json {
-        ignoreUnknownKeys = false
+        ignoreUnknownKeys = true
         isLenient = false
     }
 
@@ -94,8 +94,16 @@ class SqsConsumer(
                                 sqsClient.deleteMessage(deleteRequest)
                                 logger.debug { "Deleted SQS message: ${msg.messageId}" }
                             } else {
+                                // Undecodable messages will never succeed on retry; delete them
+                                // instead of letting them re-enter after the visibility timeout.
                                 processingErrorsCounter?.increment()
-                                logger.warn { "Failed to parse SQS message: ${msg.messageId}" }
+                                logger.warn { "Failed to parse SQS message, deleting poison message: ${msg.messageId}" }
+                                sqsClient.deleteMessage(
+                                    DeleteMessageRequest {
+                                        queueUrl = config.sqsQueueUrl
+                                        receiptHandle = msg.receiptHandle
+                                    },
+                                )
                             }
                         } catch (e: Exception) {
                             logger.error(e) { "Error processing SQS message: ${msg.messageId}" }
@@ -114,7 +122,7 @@ class SqsConsumer(
     }
 
     internal fun parseMessage(body: String): SqsNotificationMessage? {
-        val parser = if (chaosActive("chaos:notification-service:consumer_strict_schema")) strictJson else json
+        val parser = if (strictSchemaEnabled()) strictJson else json
         return try {
             // Try parsing as direct message first
             parser.decodeFromString<SqsNotificationMessage>(body)

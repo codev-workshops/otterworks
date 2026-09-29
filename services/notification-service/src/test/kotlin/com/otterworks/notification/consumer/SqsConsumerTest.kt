@@ -1,9 +1,17 @@
 package com.otterworks.notification.consumer
 
 import aws.sdk.kotlin.services.sqs.SqsClient
+import aws.sdk.kotlin.services.sqs.model.DeleteMessageRequest
+import aws.sdk.kotlin.services.sqs.model.Message
+import aws.sdk.kotlin.services.sqs.model.ReceiveMessageResponse
 import com.otterworks.notification.config.AppConfig
 import com.otterworks.notification.service.NotificationService
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -27,7 +35,8 @@ class SqsConsumerTest {
         sqsWaitTimeSeconds = 5,
     )
 
-    private val consumer = SqsConsumer(sqsClient, notificationService, config)
+    private val consumer = SqsConsumer(sqsClient, notificationService, config, strictSchemaEnabled = { false })
+    private val strictConsumer = SqsConsumer(sqsClient, notificationService, config, strictSchemaEnabled = { true })
 
     @Test
     fun `parseMessage parses direct SQS message`() {
@@ -136,5 +145,100 @@ class SqsConsumerTest {
         assertEquals("", event.fileId)
         assertEquals("", event.ownerId)
         assertEquals("", event.sharedWithUserId)
+    }
+
+    @Test
+    fun `parseMessage normalizes legacy epoch-seconds timestamp`() {
+        val body = """{"eventType":"file_shared","fileId":"file-1","timestamp":1704067200}"""
+
+        val event = consumer.parseMessage(body)
+
+        assertNotNull(event)
+        assertEquals("2024-01-01T00:00:00Z", event.timestamp)
+    }
+
+    @Test
+    fun `parseMessage normalizes legacy epoch-millis timestamp`() {
+        val body = """{"eventType":"file_shared","fileId":"file-1","timestamp":1704067200123}"""
+
+        val event = consumer.parseMessage(body)
+
+        assertNotNull(event)
+        assertEquals("2024-01-01T00:00:00.123Z", event.timestamp)
+    }
+
+    @Test
+    fun `strict schema accepts legacy epoch timestamp and producer-added fields`() {
+        val body = """
+            {
+                "eventType": "file_shared",
+                "fileId": "file-123",
+                "ownerId": "owner-1",
+                "folderId": null,
+                "sharedWithUserId": "user-2",
+                "name": "report.pdf",
+                "mimeType": "application/pdf",
+                "sizeBytes": 1024,
+                "timestamp": 1704067200
+            }
+        """.trimIndent()
+
+        val event = strictConsumer.parseMessage(body)
+
+        assertNotNull(event)
+        assertEquals("file-123", event.fileId)
+        assertEquals("2024-01-01T00:00:00Z", event.timestamp)
+    }
+
+    @Test
+    fun `strict schema unwraps full SNS envelope with legacy timestamp`() {
+        val inner = """{"eventType":"comment_added","userId":"user-1","documentId":"doc-1","timestamp":1704067200}"""
+        val body = """
+            {
+                "Type": "Notification",
+                "MessageId": "msg-123",
+                "TopicArn": "arn:aws:sns:us-east-1:000000000000:test-topic",
+                "Message": "${inner.replace("\"", "\\\"")}",
+                "Timestamp": "2024-01-01T00:00:00.000Z",
+                "SignatureVersion": "1",
+                "Signature": "sig",
+                "SigningCertURL": "https://example.com/cert.pem",
+                "UnsubscribeURL": "https://example.com/unsubscribe"
+            }
+        """.trimIndent()
+
+        val event = strictConsumer.parseMessage(body)
+
+        assertNotNull(event)
+        assertEquals("comment_added", event.eventType)
+        assertEquals("2024-01-01T00:00:00Z", event.timestamp)
+    }
+
+    @Test
+    fun `parseMessage rejects non-primitive timestamp`() {
+        val body = """{"eventType":"file_shared","timestamp":{"seconds":1704067200}}"""
+
+        assertNull(consumer.parseMessage(body))
+    }
+
+    @Test
+    fun `undecodable messages are deleted instead of being redelivered`() = runBlocking {
+        val poison = Message {
+            messageId = "poison-1"
+            receiptHandle = "receipt-1"
+            body = "not json at all"
+        }
+        coEvery { sqsClient.receiveMessage(any()) } returnsMany listOf(
+            ReceiveMessageResponse { messages = listOf(poison) },
+        ) andThen ReceiveMessageResponse { messages = emptyList() }
+
+        val job = launch { consumer.startPolling() }
+        delay(500)
+        job.cancel()
+
+        coVerify(exactly = 1) {
+            sqsClient.deleteMessage(match<DeleteMessageRequest> { it.receiptHandle == "receipt-1" })
+        }
+        coVerify(exactly = 0) { notificationService.processEvent(any()) }
     }
 }
