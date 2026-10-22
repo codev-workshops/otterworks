@@ -80,6 +80,11 @@ jobs:
             admin-dashboard: ['frontend/admin-dashboard/**']
             deployable: ['services/**', 'frontend/**', 'infrastructure/helm/**', 'scripts/**']
 
+      # The document-service chart ships copies of the incident alert rules
+      # and dashboard; refuse to deploy a tenant whose copies have drifted.
+      - name: Check incident chart files are in sync
+        run: scripts/sync-incident-chart-files.sh --check
+
       - name: Select services and tags
         id: select
         env:
@@ -258,7 +263,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       # Creates the tenant with a 72h TTL if the branch has none, otherwise
-      # redeploys it in place. `main` is the perpetual tenant and must already
+      # redeploys it in place and pushes its expiry back out to 72h. `main` is the perpetual tenant and must already
       # exist -- CD deliberately cannot create a perpetual environment (see
       # `tenant.sh persist`), so a missing t-main is an error, not a silent
       # ephemeral tenant on the golden branch.

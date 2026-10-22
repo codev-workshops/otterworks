@@ -102,6 +102,8 @@ module "database" {
   project     = "otterworks"
   db_password = var.db_password
 
+  db_instance_class = "db.t3.small"
+
   vpc_id     = local.vpc_id
   vpc_cidr   = local.vpc_cidr
   subnet_ids = local.private_subnets
@@ -395,6 +397,34 @@ module "irsa" {
           Effect   = "Allow"
           Action   = ["sns:Publish"]
           Resource = [module.messaging.events_topic_arn]
+        },
+      ]
+    })
+
+    # Ships api-gateway and ingress-nginx access logs to CloudWatch
+    # (infrastructure/helm/aws-for-fluent-bit, scripts/install-log-shipping.sh).
+    # Runs in otterworks-system, which the otterworks-* trust condition covers.
+    "fluent-bit" = jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Effect = "Allow"
+          Action = [
+            "logs:CreateLogGroup",
+            "logs:CreateLogStream",
+            "logs:PutLogEvents",
+            "logs:PutRetentionPolicy",
+            "logs:DescribeLogStreams",
+          ]
+          Resource = [
+            "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/otterworks/eks/${local.cluster_name}/*",
+            "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/otterworks/eks/${local.cluster_name}/*:log-stream:*",
+          ]
+        },
+        {
+          Effect   = "Allow"
+          Action   = ["logs:DescribeLogGroups"]
+          Resource = "*"
         },
       ]
     })
