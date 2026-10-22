@@ -17,11 +17,12 @@
 #
 # Usage:
 #   ./scripts/deploy-tenant.sh <ATTENDEE_ID> [--tier A|B] [--image-tag TAG] \
-#       [--ttl 8h] [--host-suffix demo.example.com] [--skip-db] \
+#       [--ttl 72h] [--host-suffix demo.example.com] [--skip-db] \
 #       [--profile core|full]
 #
-# Required env: AWS creds (exported), DB_PASSWORD. Stable JWT_SECRET /
-#   SECRET_KEY_BASE recommended across redeploys (auto-generated if unset).
+# Required env: AWS creds (exported), DB_PASSWORD. JWT_SECRET / SECRET_KEY_BASE
+#   are taken from the environment, else carried over from the tenant's existing
+#   Kubernetes Secrets on a redeploy, else generated for a brand-new tenant.
 # ------------------------------------------------------------------------------
 set -euo pipefail
 
@@ -35,7 +36,7 @@ ATTENDEE_ID=""
 TIER="A"
 IMAGE_TAG_OVERRIDE=""
 TENANT_BRANCH_ARG=""
-TTL="8h"
+TTL="72h"
 HOST_SUFFIX="${HOST_SUFFIX:-}"
 SKIP_DB=false
 # Deploy only the services the lab needs. At 100 tenants the difference between
@@ -56,7 +57,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -n "${ATTENDEE_ID}" ] || { err "Usage: $0 <ATTENDEE_ID> [--tier A|B] [--image-tag TAG] [--branch BRANCH] [--ttl 8h|never] [--profile core|full]"; exit 1; }
+[ -n "${ATTENDEE_ID}" ] || { err "Usage: $0 <ATTENDEE_ID> [--tier A|B] [--image-tag TAG] [--branch BRANCH] [--ttl 72h|never] [--profile core|full]"; exit 1; }
 case "${TIER}" in A|B) ;; *) err "--tier must be A or B"; exit 1 ;; esac
 case "${PROFILE}" in core|full) ;; *) err "--profile must be core or full"; exit 1 ;; esac
 mapfile -t TENANT_SERVICES < <(profile_services "${PROFILE}")
@@ -66,8 +67,6 @@ AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account 
 [ -n "${AWS_ACCOUNT_ID}" ] || { err "Unable to resolve AWS account (are creds exported?)"; exit 1; }
 ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 DB_PASSWORD="${DB_PASSWORD:?ERROR: DB_PASSWORD must be set}"
-JWT_SECRET="${JWT_SECRET:-$(openssl rand -hex 32)}"
-SECRET_KEY_BASE="${SECRET_KEY_BASE:-$(openssl rand -hex 64)}"
 
 NS="$(tenant_namespace "${ATTENDEE_ID}")"
 T_DB_NAME="$(tenant_db_name "${ATTENDEE_ID}")"
@@ -113,6 +112,57 @@ if [ -z "${KUBERNETES_SERVICE_HOST:-}" ]; then
 fi
 log "Loading shared application-infra Terraform outputs..."
 load_infra_outputs
+
+export DDB_NOTIF_PREFS=""
+EVENTING_ENV="${REPO_ROOT}/infrastructure/helm/tenant-values/$(sanitize_id "${ATTENDEE_ID}")/eventing.env"
+if [ -f "${EVENTING_ENV}" ]; then
+  log "Wiring tenant eventing from ${EVENTING_ENV#"${REPO_ROOT}/"}"
+  # shellcheck source=/dev/null
+  . "${EVENTING_ENV}"
+  T_WIRE_EVENTING="true"
+  while IFS= read -r irsa_var; do
+    irsa_svc="${irsa_var#IRSA_}"
+    IRSA_JSON="$(echo "${IRSA_JSON}" | jq -c --arg s "${irsa_svc//_/-}" --arg r "${!irsa_var}" '. + {($s): $r}')"
+  done < <(sed -n 's/^[[:space:]]*\(IRSA_[A-Za-z0-9_]*\)=.*/\1/p' "${EVENTING_ENV}")
+fi
+
+# ---------- Tenant-wide signing secrets ----------
+# Every service that mints or verifies a token (auth-service, api-gateway,
+# document-service, ...) must share one JWT_SECRET. Helm only restarts the pods
+# whose spec changed, so a redeploy that minted a fresh secret would leave the
+# untouched services verifying against the old one and every request 401s.
+# Reuse what the tenant already runs with unless the caller pins a value.
+# Prints the decoded key, or nothing when the Secret or key does not exist yet.
+# Any other failure (API error, bad encoding) returns non-zero: rotating the key
+# on a transient read error would split the tenant across two keys.
+existing_tenant_secret() {
+  local raw errfile rc=0
+  errfile="$(mktemp)"
+  raw="$(kubectl -n "${NS}" get secret "$1" -o jsonpath="{.data.$2}" 2>"${errfile}")" || rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    if grep -q NotFound "${errfile}"; then rm -f "${errfile}"; return 0; fi
+    err "Could not read $1/$2 in ${NS}: $(cat "${errfile}")"
+    rm -f "${errfile}"
+    return 1
+  fi
+  rm -f "${errfile}"
+  [ -n "${raw}" ] || return 0
+  printf '%s' "${raw}" | base64 -d || { err "$1/$2 in ${NS} is not valid base64"; return 1; }
+}
+if [ -z "${JWT_SECRET:-}" ]; then
+  JWT_SECRET="$(existing_tenant_secret api-gateway-secrets JWT_SECRET)" ||
+    { err "Refusing to rotate JWT_SECRET; set it explicitly or retry"; exit 1; }
+  if [ -n "${JWT_SECRET}" ]; then
+    log "Reusing the tenant's existing JWT_SECRET so issued tokens stay valid across the redeploy"
+  else
+    JWT_SECRET="$(openssl rand -hex 32)"
+  fi
+fi
+if [ -z "${SECRET_KEY_BASE:-}" ]; then
+  SECRET_KEY_BASE="$(existing_tenant_secret admin-service-secrets SECRET_KEY_BASE)" ||
+    { err "Refusing to rotate SECRET_KEY_BASE; set it explicitly or retry"; exit 1; }
+  [ -n "${SECRET_KEY_BASE}" ] || SECRET_KEY_BASE="$(openssl rand -hex 64)"
+fi
 
 # ---------- Namespace + isolation guardrails ----------
 log "Creating namespace ${NS} with quota / limits / network policy..."
@@ -390,11 +440,6 @@ kubectl -n "${NS}" rollout status deployment/meilisearch --timeout=180s || warn 
 log "Logging into ECR to resolve image tags..."
 aws ecr get-login-password --region "${AWS_REGION}" | \
   docker login --username AWS --password-stdin "${ECR_REGISTRY}" >/dev/null 2>&1 || true
-latest_tag() {
-  aws ecr describe-images --repository-name "${ECR_PREFIX}$1" --region "${AWS_REGION}" \
-    --query 'sort_by(imageDetails,&imagePushedAt)[-1].imageTags[0]' --output text 2>/dev/null
-}
-
 tag_exists() {
   aws ecr describe-images --repository-name "${ECR_PREFIX}$1" --image-ids "imageTag=$2" \
     --region "${AWS_REGION}" >/dev/null 2>&1
@@ -402,9 +447,9 @@ tag_exists() {
 
 # CI publishes each service a branch changed as `tenant-<id>` (and `main` for
 # the golden app), so a tenant runs its branch's build of the services that
-# branch touched and the golden build of everything else. Without this the
-# fallback is "newest image pushed to the repo", which is whichever branch built
-# last -- i.e. another tenant's code.
+# branch touched and the golden build of everything else. There is deliberately
+# no "newest image in the repo" fallback: that is whichever branch built last,
+# i.e. another tenant's code, and it once put a customer skin on t-main.
 TENANT_TAG=""
 [ -n "${TENANT_BRANCH_ARG}" ] &&
   TENANT_TAG="$(tenant_image_tag "${ATTENDEE_ID}")"
@@ -417,7 +462,6 @@ resolve_tag() {
   if tag_exists "${service}" main; then
     echo "main"; return 0
   fi
-  latest_tag "${service}"
 }
 
 # ---------- Deploy services via Helm ----------
@@ -432,8 +476,8 @@ deploy_service() {
   [ -n "${!var:-}" ] && tag="${!var}"
   [ -z "${tag}" ] && tag="$(resolve_tag "${service}")"
   if [ -z "${tag}" ] || [ "${tag}" = "None" ]; then
-    warn "No image in ECR for ${service}; skipping."
-    return 0
+    err "No :main image in ECR for ${service}; rebuild the golden images (cd-tenant.yml on main, rebuild_all) instead of deploying another branch's build."
+    return 1
   fi
   # Moving tags (tenant-<id>, main) are re-pointed by CD without the tag text
   # changing, which would leave the pod template identical and roll nothing
@@ -449,6 +493,18 @@ deploy_service() {
   tag="${tag}@${digest}"
 
   build_helm_args "${service}"
+  # Optional per-tenant values overlay (e.g. monitoring/tracing opt-in).
+  local overlay
+  overlay="${REPO_ROOT}/infrastructure/helm/tenant-values/$(sanitize_id "${ATTENDEE_ID}")/${service}.yaml"
+  if [ -f "${overlay}" ]; then
+    log "Applying tenant values ${overlay#"${REPO_ROOT}"/}"
+    EXTRA_ARGS+=(-f "${overlay}")
+  fi
+  # Alerts name the branch this tenant deploys; a namespace alone does not
+  # identify it (workshop-<id> and demo-<id> share a tenant id).
+  # Helm splits --set values on commas, which git allows in branch names.
+  [ -n "${TENANT_BRANCH_ARG}" ] &&
+    EXTRA_ARGS+=(--set-string "monitoring.rules.extraLabels.branch=${TENANT_BRANCH_ARG//,/\\,}")
   local secret_file="" secret_args=()
   if [ "${#SECRET_KV[@]}" -gt 0 ]; then
     secret_file="$(mktemp)"; chmod 600 "${secret_file}"

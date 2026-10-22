@@ -14,6 +14,13 @@ Guidance for AI agents (and humans) working in this repo.
   - Known planted bug: `services/admin-service/config/environments/production.rb`
     (`ActiveSupport::TaggedLogging.logger($stdout)` is invalid on Rails 7.1 → admin-service
     crash-loops on boot). Leave it in place on the golden app.
+- **Customer-specific skins never land on `main` or t-main.** A rebrand, logo, color
+  scheme, copy or seed data made for one customer or prospect is a variant: build it on a
+  `demo-<id>` branch and serve it from that branch's own tenant (`t-<id>`). Keep the
+  customer's name out of the repo entirely (branch names, file contents, commit messages
+  and PR text). If t-main ever shows anything but the generic OtterWorks brand, treat it
+  as an incident: redeploy t-main from the golden `:main` images and find out how a
+  variant image got there.
 - Genuine infrastructure/wiring gaps (missing tables, unwired config/secrets, unreachable
   backing services) **should** be fixed so the golden app is otherwise green.
 
@@ -104,7 +111,7 @@ the above changes `main`. Verify per the "Live verification" section of the runb
 
 ### Lifecycle / cleanup
 
-- Tenants are TTL-labeled (`deploy-tenant.sh <ID> --ttl 8h`). The platform reaper
+- Tenants are TTL-labeled (`deploy-tenant.sh <ID> --ttl 72h`, the default). The platform reaper
   (`demo-platform/reaper/reaper.sh`, scheduled from the ops dashboard) does the **full**
   teardown of an expired tenant: namespace, the `otterworks_<ID>` database, its S3 prefix
   and DynamoDB partitions, IRSA trust and DNS records. `scripts/teardown-tenant.sh <ID>`
@@ -119,7 +126,13 @@ the above changes `main`. Verify per the "Live verification" section of the runb
   (`.github/workflows/cd-tenant.yml`), creating the tenant with a 72h TTL if it does not
   exist. The one exception is `t-main.otterworks.app`, the perpetual tenant tracking `main`:
   it is exempt from the reaper and idle-suspend and cannot be checked in or bug-injected.
-  Never inject a scenario there — that is what a `workshop-<id>` tenant is for.
+  Never inject a scenario there — that is what a `workshop-<id>` tenant is for. The single
+  sanctioned way to make t-main page is the incident first-responder flow's
+  `incident/tenant.sh arm main`: it seeds a fixture under its own owner id and runs read
+  load through the ingress, which surfaces a flaw that is *already planted on `main`*
+  without touching t-main's code, config, images or chaos flags. The fix never lands on
+  `main`; it goes to the long-lived `demo-incident` branch and its tenant (see
+  `.agents/skills/incident-responder/SKILL.md`).
 
 ### Never create AWS resources from Kubernetes
 
