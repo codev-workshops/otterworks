@@ -18,6 +18,7 @@ from app.schemas.document import (
     TemplateCreate,
 )
 from app.services.event_publisher import event_publisher
+from app.telemetry import observed
 
 logger = structlog.get_logger()
 
@@ -44,6 +45,7 @@ class DocumentService:
 
     # ---- Document CRUD ----
 
+    @observed("create")
     async def create(self, data: DocumentCreate) -> Document:
         document = Document(
             title=data.title,
@@ -117,6 +119,7 @@ class DocumentService:
 
         return documents, total
 
+    @observed("update")
     async def update(
         self, document_id: UUID, data: DocumentUpdate, updated_by: UUID | None = None
     ) -> Document | None:
@@ -148,6 +151,7 @@ class DocumentService:
         )
         return document
 
+    @observed("patch")
     async def patch(self, document_id: UUID, data: DocumentPatch) -> Document | None:
         document = await self.get(document_id)
         if not document:
@@ -189,6 +193,7 @@ class DocumentService:
             )
         return document
 
+    @observed("delete")
     async def delete(self, document_id: UUID) -> bool:
         document = await self.get(document_id)
         if not document:
@@ -211,6 +216,7 @@ class DocumentService:
         )
         return list(result.scalars().all())
 
+    @observed("restore_version")
     async def restore_version(
         self, document_id: UUID, version_id: UUID
     ) -> Document | None:
@@ -255,6 +261,7 @@ class DocumentService:
 
     # ---- Search ----
 
+    @observed("search")
     async def search(
         self, query: str, page: int = 1, size: int = 20
     ) -> tuple[list[Document], int]:
@@ -297,6 +304,7 @@ class DocumentService:
 
     # ---- Comments ----
 
+    @observed("add_comment")
     async def add_comment(
         self, document_id: UUID, data: CommentCreate
     ) -> Comment | None:
@@ -331,6 +339,7 @@ class DocumentService:
         )
         return list(result.scalars().all())
 
+    @observed("delete_comment")
     async def delete_comment(self, document_id: UUID, comment_id: UUID) -> bool:
         result = await self.db.execute(
             select(Comment).where(
@@ -346,6 +355,7 @@ class DocumentService:
 
     # ---- Templates ----
 
+    @observed("create_template")
     async def create_template(self, data: TemplateCreate) -> Template:
         template = Template(
             name=data.name,
@@ -371,6 +381,7 @@ class DocumentService:
         )
         return result.scalar_one_or_none()
 
+    @observed("create_from_template")
     async def create_from_template(
         self, template_id: UUID, data: DocumentFromTemplate
     ) -> Document | None:

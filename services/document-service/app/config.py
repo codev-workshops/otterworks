@@ -20,7 +20,10 @@ class Settings(BaseSettings):
     sns_enabled: bool = False
 
     otel_exporter_otlp_endpoint: str = "http://localhost:4318"
-    otel_enabled: bool = False
+    # None = enabled whenever OTEL_EXPORTER_OTLP_ENDPOINT is set in the environment.
+    otel_enabled: bool | None = None
+
+    log_format: str = "json"
 
     request_log_dir: str = "/var/log/otterworks/document-service"
 

@@ -13,16 +13,19 @@ from app.config import settings
 from app.db.migrate import upgrade_to_head
 from app.db.session import async_session, engine
 from app.jobs import stats_rollup
-from app.middleware import request_log
+from app.middleware import request_context, request_log
 
 logger = structlog.get_logger()
 
 structlog.configure(
     processors=[
         structlog.contextvars.merge_contextvars,
+        request_context.add_service_and_trace,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer(),
+        structlog.dev.ConsoleRenderer(colors=False)
+        if settings.log_format == "text"
+        else structlog.processors.JSONRenderer(),
     ],
     wrapper_class=structlog.make_filtering_bound_logger(0),
     context_class=dict,
@@ -56,6 +59,8 @@ app = FastAPI(
 
 telemetry.instrument_sql()
 telemetry.instrument_app(app)
+# Registered before tracing so it runs inside the OpenTelemetry server span.
+request_context.install(app)
 telemetry.setup_tracing(app, engine)
 request_log.install(app)
 
@@ -65,6 +70,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[request_context.REQUEST_ID_HEADER],
 )
 
 app.include_router(health.router)
