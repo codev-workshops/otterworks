@@ -2,7 +2,7 @@
 
 import structlog
 from fastapi import APIRouter, Depends
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Gauge, generate_latest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,7 @@ SERVICE_UP.set(1)
 
 @router.get("/health")
 async def health(db: AsyncSession = Depends(get_db)):
-    """Health check with DB connectivity verification."""
+    """Health check with DB connectivity verification; 503 when the database is down."""
     try:
         await db.execute(text("SELECT 1"))
         db_status = "connected"
@@ -26,12 +26,15 @@ async def health(db: AsyncSession = Depends(get_db)):
         logger.exception("health_check_db_failed")
         db_status = "disconnected"
 
-    status = "healthy" if db_status == "connected" else "degraded"
-    return {
-        "status": status,
-        "service": "document-service",
-        "checks": {"database": db_status},
-    }
+    healthy = db_status == "connected"
+    return JSONResponse(
+        {
+            "status": "healthy" if healthy else "degraded",
+            "service": "document-service",
+            "checks": {"database": db_status},
+        },
+        status_code=200 if healthy else 503,
+    )
 
 
 @router.get("/metrics", response_class=PlainTextResponse)

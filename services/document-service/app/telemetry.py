@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+import functools
 import os
 import time
 from collections.abc import Awaitable, Callable
@@ -89,6 +90,18 @@ ROLLUP_DUPLICATE_WINDOWS = Gauge(
     ["service"],
 )
 
+DOCUMENT_OPERATIONS_TOTAL = Counter(
+    "otterworks_document_operations_total",
+    "Document-service write and search operations by outcome.",
+    ["service", "operation", "outcome"],
+)
+DOCUMENT_OPERATION_SECONDS = Histogram(
+    "otterworks_document_operation_duration_seconds",
+    "Wall time of document-service write and search operations.",
+    ["service", "operation"],
+    buckets=LATENCY_BUCKETS,
+)
+
 PROCESS_MEMORY_LIMIT_BYTES = Gauge(
     "otterworks_process_memory_limit_bytes",
     "Memory limit of the cgroup the service runs in (0 when unlimited).",
@@ -100,6 +113,30 @@ PROCESS_MEMORY_LIMIT_BYTES = Gauge(
 _request_queries: contextvars.ContextVar[list[int] | None] = contextvars.ContextVar(
     "request_queries", default=None
 )
+
+
+def observed(operation: str):  # noqa: ANN201
+    """Count and time a DocumentService coroutine; a None/False result is ``not_found``."""
+
+    def decorate(func):  # noqa: ANN001, ANN202
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+            started = time.perf_counter()
+            outcome = "error"
+            try:
+                result = await func(*args, **kwargs)
+                outcome = "not_found" if result is None or result is False else "ok"
+                return result
+            finally:
+                DOCUMENT_OPERATIONS_TOTAL.labels(SERVICE, operation, outcome).inc()
+                DOCUMENT_OPERATION_SECONDS.labels(SERVICE, operation).observe(
+                    time.perf_counter() - started
+                )
+                logger.info("document_operation", operation=operation, outcome=outcome)
+
+        return wrapper
+
+    return decorate
 
 
 def _read_rss_bytes() -> int:
@@ -195,9 +232,16 @@ def _default_metrics():  # noqa: ANN202
     )
 
 
+def tracing_enabled() -> bool:
+    """Explicit DOC_SVC_OTEL_ENABLED wins; otherwise trace when a collector is configured."""
+    if settings.otel_enabled is not None:
+        return settings.otel_enabled
+    return bool(os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"))
+
+
 def setup_tracing(app: FastAPI, engine: AsyncEngine) -> None:
     """Ship request and SQL spans to the OTLP collector when tracing is enabled."""
-    if not settings.otel_enabled:
+    if not tracing_enabled():
         return
     try:
         from opentelemetry import trace
