@@ -3,6 +3,7 @@ package com.otterworks.notification.routes
 import com.otterworks.notification.model.NotificationPreferenceRequest
 import com.otterworks.notification.model.PaginatedResponse
 import com.otterworks.notification.model.UnreadCountResponse
+import com.otterworks.notification.plugins.HealthChecker
 import com.otterworks.notification.service.NotificationService
 import com.otterworks.notification.websocket.WebSocketManager
 import io.ktor.http.HttpStatusCode
@@ -26,7 +27,11 @@ import kotlinx.serialization.Serializable
 import org.koin.ktor.ext.inject
 
 @Serializable
-data class HealthResponse(val status: String, val service: String)
+data class HealthResponse(
+    val status: String,
+    val service: String,
+    val checks: Map<String, String> = emptyMap(),
+)
 
 @Serializable
 data class ErrorResponse(val error: String)
@@ -37,10 +42,20 @@ data class MarkAllReadResponse(val markedCount: Int)
 fun Application.configureRouting(prometheusRegistry: PrometheusMeterRegistry) {
     val notificationService by inject<NotificationService>()
     val webSocketManager by inject<WebSocketManager>()
+    val healthChecker by inject<HealthChecker>()
 
     routing {
         get("/health") {
-            call.respond(HealthResponse(status = "healthy", service = "notification-service"))
+            val checks = healthChecker.run()
+            val healthy = checks.values.all { it == "up" }
+            call.respond(
+                if (healthy) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable,
+                HealthResponse(
+                    status = if (healthy) "healthy" else "degraded",
+                    service = "notification-service",
+                    checks = checks,
+                ),
+            )
         }
 
         get("/metrics") {

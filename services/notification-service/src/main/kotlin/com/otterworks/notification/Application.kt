@@ -1,12 +1,17 @@
 package com.otterworks.notification
 
 import aws.sdk.kotlin.services.dynamodb.DynamoDbClient
+import aws.sdk.kotlin.services.dynamodb.describeTable
 import aws.sdk.kotlin.services.ses.SesClient
 import aws.sdk.kotlin.services.sqs.SqsClient
 import aws.smithy.kotlin.runtime.net.url.Url
 import com.otterworks.notification.config.AppConfig
 import com.otterworks.notification.consumer.SqsConsumer
+import com.otterworks.notification.plugins.HealthChecker
+import com.otterworks.notification.plugins.buildOpenTelemetry
 import com.otterworks.notification.plugins.configureMonitoring
+import com.otterworks.notification.plugins.configureObservability
+import io.ktor.server.plugins.callid.callId
 import io.micrometer.core.instrument.MeterRegistry
 import com.otterworks.notification.repository.NotificationRepository
 import com.otterworks.notification.routes.configureRouting
@@ -48,6 +53,7 @@ fun main() {
 
 fun Application.module(config: AppConfig = AppConfig.load()) {
     val prometheusRegistry = configureMonitoring()
+    configureObservability(buildOpenTelemetry())
     configurePlugins(config)
     configureDependencyInjection(config, prometheusRegistry)
     configureRouting(prometheusRegistry)
@@ -92,7 +98,7 @@ fun Application.configurePlugins(config: AppConfig = AppConfig.load()) {
             logger.error(cause) { "Unhandled exception" }
             call.respond(
                 status = HttpStatusCode.InternalServerError,
-                message = mapOf("error" to "Internal server error")
+                message = mapOf("error" to "Internal server error", "requestId" to (call.callId ?: "")),
             )
         }
     }
@@ -131,6 +137,17 @@ fun Application.configureDependencyInjection(
                 }
 
                 singleOf(::WebSocketManager)
+
+                single {
+                    val dynamo = get<DynamoDbClient>()
+                    HealthChecker(
+                        mapOf(
+                            "dynamodb" to suspend {
+                                dynamo.describeTable { tableName = config.dynamoDbTableNotifications }
+                            },
+                        ),
+                    )
+                }
 
                 single { NotificationRepository(get<DynamoDbClient>(), get<AppConfig>()) }
                 single { EmailSender(get<SesClient>(), get<AppConfig>()) }

@@ -9,6 +9,7 @@ import com.otterworks.notification.template.NotificationTemplates
 import com.otterworks.notification.websocket.WebSocketManager
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Timer
 import mu.KotlinLogging
 import java.time.Instant
 import java.util.UUID
@@ -26,10 +27,30 @@ class NotificationService(
     private val pushSentCounter: Counter? = meterRegistry?.counter("notifications.push.sent")
 
     suspend fun processEvent(event: SqsNotificationMessage) {
+        val sample = meterRegistry?.let { Timer.start(it) }
+        var outcome = "error"
+        try {
+            outcome = deliver(event)
+        } finally {
+            meterRegistry?.let { registry ->
+                sample?.stop(
+                    Timer.builder("notifications.processing.duration")
+                        .description("Time to resolve, deliver and persist one notification event")
+                        .tag("event_type", event.eventType)
+                        .tag("outcome", outcome)
+                        .publishPercentileHistogram()
+                        .register(registry),
+                )
+                registry.counter("notifications.events", "event_type", event.eventType, "outcome", outcome).increment()
+            }
+        }
+    }
+
+    private suspend fun deliver(event: SqsNotificationMessage): String {
         val targetUserId = resolveTargetUserId(event)
         if (targetUserId.isBlank()) {
             logger.warn { "No target user for event: ${event.eventType}" }
-            return
+            return "skipped"
         }
 
         val preferences = repository.getPreferences(targetUserId)
@@ -54,6 +75,8 @@ class NotificationService(
             if (emailSent) {
                 deliveredVia.add("email")
                 emailSentCounter?.increment()
+            } else {
+                meterRegistry?.counter("notifications.delivery.failures", "channel", "email")?.increment()
             }
         }
 
@@ -90,6 +113,7 @@ class NotificationService(
         logger.info {
             "Processed ${event.eventType} for user $targetUserId via ${deliveredVia.joinToString()}"
         }
+        return "delivered"
     }
 
     suspend fun getNotifications(userId: String, page: Int, pageSize: Int) =

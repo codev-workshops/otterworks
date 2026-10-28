@@ -6,6 +6,7 @@ import com.otterworks.notification.model.NotificationPreference
 import com.otterworks.notification.model.SqsNotificationMessage
 import com.otterworks.notification.repository.NotificationRepository
 import com.otterworks.notification.websocket.WebSocketManager
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -245,5 +246,36 @@ class NotificationServiceTest {
         service.processEvent(event)
 
         coVerify { webSocketManager.pushNotification("user-3", any()) }
+    }
+
+    @Test
+    fun `processEvent records outcome-tagged event, duration and email failure metrics`() = runTest {
+        val registry = SimpleMeterRegistry()
+        val instrumented = NotificationService(repository, emailSender, webSocketManager, registry)
+        coEvery { repository.getPreferences("user-2") } returns NotificationPreference(userId = "user-2")
+        coEvery { emailSender.sendEmail(any(), any(), any()) } returns false
+
+        instrumented.processEvent(
+            SqsNotificationMessage(
+                eventType = "file_shared",
+                fileId = "file-123",
+                ownerId = "owner-1",
+                sharedWithUserId = "user-2",
+                timestamp = "2024-01-01T00:00:00Z",
+            ),
+        )
+        instrumented.processEvent(SqsNotificationMessage(eventType = "file_shared", timestamp = "2024-01-01T00:00:00Z"))
+
+        assertEquals(
+            1.0,
+            registry.get("notifications.events").tags("event_type", "file_shared", "outcome", "delivered").counter().count(),
+        )
+        assertEquals(
+            1.0,
+            registry.get("notifications.events").tags("event_type", "file_shared", "outcome", "skipped").counter().count(),
+        )
+        assertEquals(1L, registry.get("notifications.processing.duration").tags("outcome", "delivered").timer().count())
+        assertEquals(1.0, registry.get("notifications.delivery.failures").tags("channel", "email").counter().count())
+        assertEquals(1.0, registry.get("notifications.processed").counter().count())
     }
 }
