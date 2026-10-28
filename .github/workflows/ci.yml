@@ -40,6 +40,7 @@ jobs:
       report-service: ${{ steps.changes.outputs.report-service }}
       legacy-portal: ${{ steps.changes.outputs.legacy-portal }}
       api-tests: ${{ steps.changes.outputs.api-tests }}
+      observability: ${{ steps.changes.outputs.observability }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
@@ -81,12 +82,28 @@ jobs:
               - 'services/report-service/**'
             legacy-portal:
               - 'services/legacy-portal/**'
+            observability:
+              - 'observability/prometheus/**'
             api-tests:
               - 'tests/api/**'
               - 'docs/api-route-matrix.md'
               - 'services/api-gateway/internal/config/**'
               - 'docker-compose*.yml'
               - 'Makefile'
+
+  # Prometheus config, recording rules and alerts
+  observability:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.observability == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: promtool check + rule unit tests
+        run: |
+          docker run --rm -v "$PWD/observability/prometheus:/p" -w /p --entrypoint promtool \
+            prom/prometheus:v2.51.0 check config prometheus.yml
+          docker run --rm -v "$PWD/observability/prometheus:/p" -w /p --entrypoint promtool \
+            prom/prometheus:v2.51.0 test rules tests/rules_test.yml
 
   # Go - API Gateway
   api-gateway:

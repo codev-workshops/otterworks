@@ -1,0 +1,100 @@
+# promtool test rules tests/rules_test.yml  (run from observability/prometheus)
+rule_files:
+  - ../recording_rules.yml
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Every stack's request counter lands on the same normalized series.
+  - interval: 1m
+    input_series:
+      - series: 'http_requests_total{job="file-service",method="GET",path="/api/v1/files",status="200"}'
+        values: '0+60x10'
+      - series: 'http_requests_total{job="document-service",method="GET",handler="/api/v1/documents/",status="200"}'
+        values: '0+60x10'
+      - series: 'api_gateway_http_requests_total{job="api-gateway",method="GET",path="/api/v1/docs/*",status="200"}'
+        values: '0+60x10'
+      - series: 'search_service_requests_total{job="search-service",method="GET",endpoint="/api/v1/search",status="200"}'
+        values: '0+60x10'
+      - series: 'http_server_requests_seconds_count{job="auth-service",method="POST",uri="/api/v1/auth/login",status="200",outcome="SUCCESS"}'
+        values: '0+60x10'
+      - series: 'ktor_http_server_requests_seconds_count{job="notification-service",method="GET",route="/api/v1/notifications",status="200"}'
+        values: '0+60x10'
+      - series: 'http_requests_received_total{job="audit-service",method="GET",code="200",controller="Audit",action="List"}'
+        values: '0+60x10'
+    promql_expr_test:
+      - expr: job_method_path_status:http_requests:rate5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'job_method_path_status:http_requests:rate5m{job="file-service",method="GET",path="/api/v1/files",status="200"}'
+            value: 1
+          - labels: 'job_method_path_status:http_requests:rate5m{job="document-service",method="GET",path="/api/v1/documents/",status="200"}'
+            value: 1
+          - labels: 'job_method_path_status:http_requests:rate5m{job="api-gateway",method="GET",path="/api/v1/docs/*",status="200"}'
+            value: 1
+          - labels: 'job_method_path_status:http_requests:rate5m{job="search-service",method="GET",path="/api/v1/search",status="200"}'
+            value: 1
+          - labels: 'job_method_path_status:http_requests:rate5m{job="auth-service",method="POST",path="/api/v1/auth/login",status="200"}'
+            value: 1
+          - labels: 'job_method_path_status:http_requests:rate5m{job="notification-service",method="GET",path="/api/v1/notifications",status="200"}'
+            value: 1
+          - labels: 'job_method_path_status:http_requests:rate5m{job="audit-service",method="GET",path="",status="200"}'
+            value: 1
+      - expr: job:http_requests:rate5m{job="auth-service"}
+        eval_time: 10m
+        exp_samples:
+          - labels: 'job:http_requests:rate5m{job="auth-service"}'
+            value: 1
+
+  # A Spring service (no http_requests_total) now trips the shared 5xx alert.
+  - interval: 1m
+    input_series:
+      - series: 'http_server_requests_seconds_count{job="auth-service",method="POST",uri="/api/v1/auth/login",status="500"}'
+        values: '0+30x10'
+      - series: 'http_server_requests_seconds_count{job="auth-service",method="POST",uri="/api/v1/auth/login",status="200"}'
+        values: '0+30x10'
+    promql_expr_test:
+      - expr: job:http_error_ratio:rate5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'job:http_error_ratio:rate5m{job="auth-service"}'
+            value: 0.5
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HighErrorRate
+        exp_alerts:
+          - exp_labels:
+              job: auth-service
+              severity: critical
+            exp_annotations:
+              summary: "High 5xx error rate on auth-service"
+              description: "auth-service is returning more than 5% server errors (current value: 50%)."
+              runbook_url: https://docs.otterworks.dev/runbooks/high-error-rate
+
+  # Gateway histogram feeds the shared latency percentiles and alert.
+  - interval: 1m
+    input_series:
+      - series: 'api_gateway_http_request_duration_seconds_bucket{job="api-gateway",method="GET",path="/x",le="1"}'
+        values: '0x10'
+      - series: 'api_gateway_http_request_duration_seconds_bucket{job="api-gateway",method="GET",path="/x",le="5"}'
+        values: '0+60x10'
+      - series: 'api_gateway_http_request_duration_seconds_bucket{job="api-gateway",method="GET",path="/x",le="+Inf"}'
+        values: '0+60x10'
+    promql_expr_test:
+      - expr: job:http_request_duration_seconds:p50
+        eval_time: 10m
+        exp_samples:
+          - labels: 'job:http_request_duration_seconds:p50{job="api-gateway"}'
+            value: 3
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HighLatencyP99
+        exp_alerts:
+          - exp_labels:
+              job: api-gateway
+              severity: critical
+            exp_annotations:
+              summary: "P99 latency above 2s on api-gateway"
+              description: "The 99th percentile latency for api-gateway has exceeded 2 seconds for the last 5 minutes (current value: 4.96s)."
+              runbook_url: https://docs.otterworks.dev/runbooks/high-latency

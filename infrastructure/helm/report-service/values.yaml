@@ -43,7 +43,8 @@ healthCheck:
 
 monitoring:
   enabled: true
-  path: /metrics
+  # Spring Boot Actuator serves Prometheus metrics here; /metrics is not mapped.
+  path: /actuator/prometheus
   port: 8091
 
 networkPolicy:
