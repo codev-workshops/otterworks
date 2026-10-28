@@ -1,14 +1,18 @@
 package com.otterworks.auth.service;
 
+import static net.logstash.logback.argument.StructuredArguments.kv;
+
 import com.otterworks.auth.dto.AuthResponse;
 import com.otterworks.auth.dto.ChangePasswordRequest;
 import com.otterworks.auth.dto.LoginRequest;
 import com.otterworks.auth.dto.RegisterRequest;
 import com.otterworks.auth.entity.RefreshToken;
 import com.otterworks.auth.entity.User;
+import com.otterworks.auth.observability.AuthMetrics;
 import com.otterworks.auth.repository.RefreshTokenRepository;
 import com.otterworks.auth.repository.UserRepository;
 import com.otterworks.auth.security.JwtTokenProvider;
+import io.jsonwebtoken.JwtException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Set;
@@ -28,12 +32,15 @@ public class AuthService {
   private final PasswordEncoder passwordEncoder;
   private final JwtTokenProvider jwtTokenProvider;
   private final RefreshTokenRepository refreshTokenRepository;
+  private final AuthMetrics metrics;
 
   public AuthService(
       UserRepository userRepository,
       PasswordEncoder passwordEncoder,
       JwtTokenProvider jwtTokenProvider,
-      RefreshTokenRepository refreshTokenRepository) {
+      RefreshTokenRepository refreshTokenRepository,
+      AuthMetrics metrics) {
+    this.metrics = metrics;
     this.userRepository = userRepository;
     this.passwordEncoder = passwordEncoder;
     this.jwtTokenProvider = jwtTokenProvider;
@@ -43,6 +50,8 @@ public class AuthService {
   @Transactional
   public AuthResponse register(RegisterRequest request) {
     if (userRepository.existsByEmail(request.getEmail())) {
+      metrics.registration("duplicate_email");
+      log.info("Registration rejected {}", kv("reason", "duplicate_email"));
       throw new IllegalArgumentException("Email already registered");
     }
 
@@ -53,39 +62,55 @@ public class AuthService {
     user.setRoles(Set.of(User.Role.USER));
     user = userRepository.save(user);
 
-    log.info("User registered: email={}", user.getEmail());
+    metrics.registration(AuthMetrics.SUCCESS);
+    log.info("User registered {}", kv("user_id", user.getId()));
     return buildAuthResponse(user);
   }
 
   @Transactional
   public AuthResponse login(LoginRequest request) {
-    User user =
-        userRepository
-            .findByEmail(request.getEmail())
-            .orElseThrow(() -> new IllegalArgumentException("Invalid credentials"));
+    User user = userRepository.findByEmail(request.getEmail()).orElse(null);
+    if (user == null) {
+      metrics.login("unknown_user");
+      log.warn("Login failed {}", kv("reason", "unknown_user"));
+      throw new IllegalArgumentException("Invalid credentials");
+    }
 
     if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
+      metrics.login("bad_password");
+      log.warn("Login failed {} {}", kv("reason", "bad_password"), kv("user_id", user.getId()));
       throw new IllegalArgumentException("Invalid credentials");
     }
 
     user.setLastLoginAt(Instant.now());
     userRepository.save(user);
 
-    log.info("User logged in: email={}", user.getEmail());
+    metrics.login(AuthMetrics.SUCCESS);
+    log.info("User logged in {}", kv("user_id", user.getId()));
     return buildAuthResponse(user);
   }
 
   @Transactional
   public AuthResponse refreshToken(String token) {
-    String jti = jwtTokenProvider.extractJti(token);
-    String userId = jwtTokenProvider.validateRefreshTokenAndGetUserId(token);
+    String jti;
+    String userId;
+    try {
+      jti = jwtTokenProvider.extractJti(token);
+      userId = jwtTokenProvider.validateRefreshTokenAndGetUserId(token);
+    } catch (JwtException | IllegalArgumentException e) {
+      rejectRefresh("invalid_token", null);
+      throw e;
+    }
 
     RefreshToken storedToken =
-        refreshTokenRepository
-            .findByTokenIdAndRevokedFalse(jti)
-            .orElseThrow(() -> new IllegalArgumentException("Invalid or revoked refresh token"));
+        refreshTokenRepository.findByTokenIdAndRevokedFalse(jti).orElse(null);
+    if (storedToken == null) {
+      rejectRefresh("revoked", userId);
+      throw new IllegalArgumentException("Invalid or revoked refresh token");
+    }
 
     if (storedToken.getExpiresAt().isBefore(Instant.now())) {
+      rejectRefresh("expired", userId);
       throw new IllegalArgumentException("Refresh token expired");
     }
 
@@ -97,7 +122,8 @@ public class AuthService {
             .findById(UUID.fromString(userId))
             .orElseThrow(() -> new IllegalArgumentException("User not found"));
 
-    log.info("Token refreshed for user: {}", user.getEmail());
+    metrics.tokenRefresh(AuthMetrics.SUCCESS);
+    log.info("Token refreshed {}", kv("user_id", user.getId()));
     return buildAuthResponse(user);
   }
 
@@ -109,6 +135,9 @@ public class AuthService {
             .orElseThrow(() -> new IllegalArgumentException("User not found"));
 
     if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPasswordHash())) {
+      metrics.passwordChange("bad_password");
+      log.warn(
+          "Password change rejected {} {}", kv("reason", "bad_password"), kv("user_id", userId));
       throw new IllegalArgumentException("Current password is incorrect");
     }
 
@@ -116,13 +145,20 @@ public class AuthService {
     userRepository.save(user);
 
     refreshTokenRepository.revokeAllByUserId(userId);
-    log.info("Password changed for user: {}", userId);
+    metrics.passwordChange(AuthMetrics.SUCCESS);
+    log.info("Password changed {}", kv("user_id", userId));
   }
 
   @Transactional
   public void logout(UUID userId) {
     refreshTokenRepository.revokeAllByUserId(userId);
-    log.info("User logged out: {}", userId);
+    metrics.logout();
+    log.info("User logged out {}", kv("user_id", userId));
+  }
+
+  private void rejectRefresh(String reason, String userId) {
+    metrics.tokenRefresh(reason);
+    log.warn("Token refresh rejected {} {}", kv("reason", reason), kv("user_id", userId));
   }
 
   private AuthResponse buildAuthResponse(User user) {

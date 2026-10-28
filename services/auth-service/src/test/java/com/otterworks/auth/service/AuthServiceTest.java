@@ -10,16 +10,17 @@ import com.otterworks.auth.dto.LoginRequest;
 import com.otterworks.auth.dto.RegisterRequest;
 import com.otterworks.auth.entity.RefreshToken;
 import com.otterworks.auth.entity.User;
+import com.otterworks.auth.observability.AuthMetrics;
 import com.otterworks.auth.repository.RefreshTokenRepository;
 import com.otterworks.auth.repository.UserRepository;
 import com.otterworks.auth.security.JwtTokenProvider;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -32,12 +33,21 @@ class AuthServiceTest {
   @Mock private JwtTokenProvider jwtTokenProvider;
   @Mock private RefreshTokenRepository refreshTokenRepository;
 
-  @InjectMocks private AuthService authService;
+  private SimpleMeterRegistry meterRegistry;
+  private AuthService authService;
 
   private User testUser;
 
   @BeforeEach
   void setUp() {
+    meterRegistry = new SimpleMeterRegistry();
+    authService =
+        new AuthService(
+            userRepository,
+            passwordEncoder,
+            jwtTokenProvider,
+            refreshTokenRepository,
+            new AuthMetrics(meterRegistry));
     testUser = new User();
     testUser.setId(UUID.randomUUID());
     testUser.setEmail("test@otterworks.dev");
@@ -91,6 +101,7 @@ class AuthServiceTest {
     assertThatThrownBy(() -> authService.register(request))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Email already registered");
+    assertThat(count("auth.registrations", "outcome", "duplicate_email")).isEqualTo(1.0);
   }
 
   @Test
@@ -114,6 +125,7 @@ class AuthServiceTest {
 
     assertThat(response.getAccessToken()).isEqualTo("access-token");
     assertThat(response.getUser().getEmail()).isEqualTo("test@otterworks.dev");
+    assertThat(count("auth.logins", "outcome", "success")).isEqualTo(1.0);
   }
 
   @Test
@@ -127,6 +139,7 @@ class AuthServiceTest {
     assertThatThrownBy(() -> authService.login(request))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Invalid credentials");
+    assertThat(count("auth.logins", "outcome", "unknown_user")).isEqualTo(1.0);
   }
 
   @Test
@@ -141,6 +154,7 @@ class AuthServiceTest {
     assertThatThrownBy(() -> authService.login(request))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Invalid credentials");
+    assertThat(count("auth.logins", "outcome", "bad_password")).isEqualTo(1.0);
   }
 
   @Test
@@ -172,5 +186,10 @@ class AuthServiceTest {
     assertThatThrownBy(() -> authService.changePassword(testUser.getId(), request))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Current password is incorrect");
+  }
+
+  private double count(String name, String tagKey, String tagValue) {
+    var counter = meterRegistry.find(name).tag(tagKey, tagValue).counter();
+    return counter == null ? 0.0 : counter.count();
   }
 }

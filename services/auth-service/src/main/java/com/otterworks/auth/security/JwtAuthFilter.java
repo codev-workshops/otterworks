@@ -1,6 +1,12 @@
 package com.otterworks.auth.security;
 
+import static net.logstash.logback.argument.StructuredArguments.kv;
+
+import com.otterworks.auth.observability.AuthMetrics;
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.MalformedJwtException;
+import io.jsonwebtoken.security.SignatureException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -24,9 +30,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
   private static final Logger log = LoggerFactory.getLogger(JwtAuthFilter.class);
 
   private final JwtTokenProvider jwtTokenProvider;
+  private final AuthMetrics metrics;
 
-  public JwtAuthFilter(JwtTokenProvider jwtTokenProvider) {
+  public JwtAuthFilter(JwtTokenProvider jwtTokenProvider, AuthMetrics metrics) {
     this.jwtTokenProvider = jwtTokenProvider;
+    this.metrics = metrics;
   }
 
   @Override
@@ -62,11 +70,26 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
         SecurityContextHolder.getContext().setAuthentication(authentication);
       } catch (Exception e) {
-        log.debug("Invalid JWT token: {}", e.getMessage());
+        String reason = rejectionReason(e);
+        metrics.rejectedToken(reason);
+        log.info("Rejected bearer token {}", kv("reason", reason));
       }
     }
 
     filterChain.doFilter(request, response);
+  }
+
+  static String rejectionReason(Exception e) {
+    if (e instanceof ExpiredJwtException) {
+      return "expired";
+    }
+    if (e instanceof SignatureException) {
+      return "bad_signature";
+    }
+    if (e instanceof MalformedJwtException) {
+      return "malformed";
+    }
+    return "invalid";
   }
 
   private String extractToken(HttpServletRequest request) {

@@ -67,6 +67,7 @@ services:
       REDIS_PORT: 6379
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       OTEL_SERVICE_NAME: auth-service
+      OTEL_SDK_DISABLED: 'false'
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/otterworks
       SPRING_DATASOURCE_USERNAME: otterworks
       SPRING_DATASOURCE_PASSWORD: otterworks_dev
