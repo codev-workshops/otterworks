@@ -47,8 +47,23 @@ management:
         enabled: true
     tags:
       application: auth-service
+  tracing:
+    enabled: ${OTEL_TRACING_ENABLED:true}
+    sampling:
+      probability: ${OTEL_TRACES_SAMPLER_ARG:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/traces}
 
 logging:
+  # json (default, one JSON object per line) or text (human-readable console pattern)
+  format: ${LOG_FORMAT:json}
   level:
+    root: INFO
     com.otterworks: INFO
+    org.springframework: WARN
+    org.springframework.boot.web.embedded.tomcat: INFO
     org.springframework.security: WARN
+    org.hibernate: WARN
+    com.zaxxer.hikari: WARN
+    org.apache: WARN

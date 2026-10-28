@@ -18,6 +18,9 @@ repositories {
     mavenCentral()
 }
 
+// Align the OpenTelemetry SDK/exporter that Spring Boot manages with the API pinned below.
+ext['opentelemetry.version'] = '1.36.0'
+
 dependencies {
     // Spring Boot
     implementation 'org.springframework.boot:spring-boot-starter-web'
@@ -39,6 +42,8 @@ dependencies {
     // Observability
     implementation 'io.micrometer:micrometer-registry-prometheus'
     implementation 'io.opentelemetry:opentelemetry-api:1.36.0'
+    implementation 'io.micrometer:micrometer-tracing-bridge-otel'
+    implementation 'io.opentelemetry:opentelemetry-exporter-otlp'
 
     // Logging
     implementation 'net.logstash.logback:logstash-logback-encoder:7.4'
