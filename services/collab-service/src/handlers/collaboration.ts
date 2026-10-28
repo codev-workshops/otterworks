@@ -5,6 +5,7 @@ import { DocumentStore } from '../services/document-store';
 import { AwarenessService, type CursorPosition } from '../services/awareness';
 import { extractUserFromSocket } from '../middleware/auth';
 import { MetricsCollector } from '../metrics';
+import { resolveRequestId } from '../observability/request-context';
 import { PresenceHandler } from './presence';
 
 export interface CommentAnnotation {
@@ -55,7 +56,12 @@ export class CollaborationManager {
 
     io.on('connection', (socket: Socket) => {
       this.deps.metrics.activeConnections.inc();
-      logger.info({ socketId: socket.id }, 'client_connected');
+      const requestId = resolveRequestId(socket.handshake.headers['x-request-id']);
+      socket.data.requestId = requestId;
+      logger.info(
+        { socketId: socket.id, requestId, userId: extractUserFromSocket(socket).userId },
+        'client_connected',
+      );
 
       this.registerSocketHandlers(socket);
 

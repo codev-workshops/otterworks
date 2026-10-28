@@ -12,6 +12,8 @@ export class MetricsCollector {
   readonly connectionErrors: Counter;
   readonly persistenceOperations: Counter;
   readonly persistenceDuration: Histogram;
+  readonly httpRequestsTotal: Counter;
+  readonly httpRequestDuration: Histogram;
 
   constructor() {
     this.registry = new Registry();
@@ -82,6 +84,21 @@ export class MetricsCollector {
       help: 'Duration of persistence operations',
       labelNames: ['operation'] as const,
       buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5],
+      registers: [this.registry],
+    });
+
+    this.httpRequestsTotal = new Counter({
+      name: 'http_requests_total',
+      help: 'Total HTTP requests by method, route template and status',
+      labelNames: ['method', 'route', 'status'] as const,
+      registers: [this.registry],
+    });
+
+    this.httpRequestDuration = new Histogram({
+      name: 'http_request_duration_seconds',
+      help: 'HTTP request duration by method and route template',
+      labelNames: ['method', 'route'] as const,
+      buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
       registers: [this.registry],
     });
   }

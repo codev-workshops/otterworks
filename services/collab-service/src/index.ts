@@ -1,3 +1,5 @@
+// Must stay first: starts OpenTelemetry before http/express are loaded.
+import { tracingSdk } from './instrumentation';
 import express from 'express';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
@@ -5,10 +7,15 @@ import { WebSocketServer } from 'ws';
 import jwt from 'jsonwebtoken';
 import cors from 'cors';
 import helmet from 'helmet';
-import pino from 'pino';
 import { loadConfig } from './config';
 import { MetricsCollector } from './metrics';
 import { createAuthMiddleware } from './middleware/auth';
+import { createLogger } from './observability/logger';
+import {
+  createErrorHandler,
+  createRequestContextMiddleware,
+  resolveRequestId,
+} from './observability/request-context';
 import { RedisAdapter } from './services/redis-adapter';
 import { DocumentStore } from './services/document-store';
 import { AwarenessService } from './services/awareness';
@@ -20,25 +27,20 @@ const { setupWSConnection } = require('y-websocket/bin/utils');
 
 const config = loadConfig();
 
-const logger = pino({
-  level: config.logLevel,
-  transport:
-    process.env.NODE_ENV !== 'production'
-      ? { target: 'pino-pretty', options: { colorize: true } }
-      : undefined,
-  base: { service: 'collab-service' },
-});
+const logger = createLogger({ level: config.logLevel, format: config.logFormat });
 
 const app = express();
 const httpServer = createServer(app);
 const metrics = new MetricsCollector();
 
 // Middleware
+app.use(createRequestContextMiddleware(logger, metrics));
 app.use(helmet());
 app.use(
   cors({
     origin: config.cors.origins,
     credentials: true,
+    exposedHeaders: ['X-Request-ID'],
   }),
 );
 app.use(express.json());
@@ -81,6 +83,8 @@ app.get('/api/v1/collab/documents', (_req, res) => {
   res.json({ documents: activeDocuments, count: activeDocuments.length });
 });
 
+app.use(createErrorHandler(logger));
+
 // Socket.IO server
 const io = new SocketIOServer(httpServer, {
   cors: {
@@ -92,7 +96,7 @@ const io = new SocketIOServer(httpServer, {
 });
 
 // JWT auth middleware for WebSocket
-io.use(createAuthMiddleware(config.jwt.secret, logger));
+io.use(createAuthMiddleware(config.jwt.secret, logger, metrics));
 
 // Initialize services
 const redisAdapter = new RedisAdapter(
@@ -131,7 +135,10 @@ const collabManager = setupCollaborationHandlers(
 const wss = new WebSocketServer({ noServer: true });
 wss.on('connection', (conn, req) => {
   setupWSConnection(conn, req);
-  logger.info({ url: req.url }, 'y-websocket_client_connected');
+  logger.info(
+    { url: req.url, requestId: resolveRequestId(req.headers['x-request-id']) },
+    'y-websocket_client_connected',
+  );
 });
 
 // Route WebSocket upgrades: Socket.IO paths go to Socket.IO, all others to y-websocket
@@ -148,6 +155,7 @@ httpServer.on('upgrade', (request, socket, head) => {
     request.headers.authorization?.replace('Bearer ', '');
 
   if (!token) {
+    metrics.connectionErrors.inc({ reason: 'auth_missing_token' });
     logger.warn('y-websocket_connection_rejected: no token');
     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
     socket.destroy();
@@ -157,6 +165,7 @@ httpServer.on('upgrade', (request, socket, head) => {
   try {
     jwt.verify(token, config.jwt.secret);
   } catch {
+    metrics.connectionErrors.inc({ reason: 'auth_invalid_token' });
     logger.warn('y-websocket_connection_rejected: invalid token');
     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
     socket.destroy();
@@ -204,7 +213,8 @@ async function shutdown(signal: string): Promise<void> {
   httpServer.close(() => {
     redisAdapter.disconnect();
     logger.info('collaboration_service_stopped');
-    process.exit(0);
+    const flushTraces = tracingSdk?.shutdown() ?? Promise.resolve();
+    flushTraces.catch(() => undefined).finally(() => process.exit(0));
   });
 
   // Force exit after 10 seconds

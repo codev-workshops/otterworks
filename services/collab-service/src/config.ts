@@ -22,9 +22,9 @@ export interface Config {
     maxSnapshotsPerDocument: number;
   };
   logLevel: string;
+  logFormat: string;
   otel: {
     enabled: boolean;
-    endpoint: string;
     serviceName: string;
   };
 }
@@ -56,9 +56,10 @@ export function loadConfig(): Config {
       maxSnapshotsPerDocument: parseInt(process.env.MAX_SNAPSHOTS || '50', 10),
     },
     logLevel: process.env.LOG_LEVEL || 'info',
+    logFormat: process.env.LOG_FORMAT || 'json',
     otel: {
-      enabled: process.env.OTEL_ENABLED === 'true',
-      endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318',
+      enabled:
+        process.env.OTEL_ENABLED !== 'false' && process.env.TRACING_ENABLED !== 'false',
       serviceName: process.env.OTEL_SERVICE_NAME || 'collab-service',
     },
   };
