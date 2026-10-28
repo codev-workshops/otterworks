@@ -12,6 +12,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
@@ -70,7 +71,7 @@ func main() {
 	r.Use(chimw.RealIP)
 	r.Use(middleware.Metrics)
 	r.Use(middleware.Logger(logger))
-	r.Use(chimw.Recoverer)
+	r.Use(middleware.Recoverer(logger))
 	r.Use(chimw.Compress(5))
 
 	// Rate limiting
@@ -117,7 +118,7 @@ func main() {
 	// HTTP server
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      r,
+		Handler:      tracedHandler(r),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -197,4 +198,18 @@ func initTracer() func(context.Context) error {
 	))
 
 	return tp.Shutdown
+}
+
+// tracedHandler starts the server span outside every middleware, so request-ID
+// tagging, access logs and the proxy transport all see the active trace.
+// Probe endpoints are not traced.
+func tracedHandler(h http.Handler) http.Handler {
+	return otelhttp.NewHandler(h, "api-gateway",
+		otelhttp.WithFilter(func(r *http.Request) bool {
+			return r.URL.Path != "/health" && r.URL.Path != "/metrics"
+		}),
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			return r.Method + " " + middleware.RouteFor(r.URL.Path)
+		}),
+	)
 }

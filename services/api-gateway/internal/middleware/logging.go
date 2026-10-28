@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Logger returns an HTTP middleware that writes one JSON access log line per
@@ -33,6 +34,10 @@ func Logger(logger zerolog.Logger) func(http.Handler) http.Handler {
 				event = logger.Warn()
 			default:
 				event = logger.Info()
+			}
+
+			if sc := trace.SpanContextFromContext(r.Context()); sc.IsValid() {
+				event = event.Str("trace_id", sc.TraceID().String()).Str("span_id", sc.SpanID().String())
 			}
 
 			ua := r.UserAgent()
