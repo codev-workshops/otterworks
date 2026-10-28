@@ -32,6 +32,7 @@ dependencies {
     implementation("io.ktor:ktor-server-cors-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-websockets-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-call-logging-jvm:$ktorVersion")
+    implementation("io.ktor:ktor-server-call-id-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-default-headers-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-metrics-micrometer-jvm:$ktorVersion")
     implementation("io.ktor:ktor-serialization-kotlinx-json-jvm:$ktorVersion")
@@ -69,6 +70,8 @@ dependencies {
     implementation("io.opentelemetry:opentelemetry-api:1.36.0")
     implementation("io.opentelemetry:opentelemetry-sdk:1.36.0")
     implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.36.0")
+    implementation("io.opentelemetry:opentelemetry-sdk-extension-autoconfigure:1.36.0")
+    implementation("io.opentelemetry.instrumentation:opentelemetry-ktor-2.0:2.2.0-alpha")
 
     // Redis (chaos flag checks)
     implementation("redis.clients:jedis:5.1.3")
@@ -78,6 +81,7 @@ dependencies {
     testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:1.9.23")
     testImplementation("io.mockk:mockk:1.13.10")
+    testImplementation("io.opentelemetry:opentelemetry-sdk-testing:1.36.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:$coroutinesVersion")
     testImplementation("io.insert-koin:koin-test:$koinVersion")
 }
