@@ -6,6 +6,7 @@ import com.otterworks.report.config.AppConfig;
 import com.otterworks.report.model.Report;
 import com.otterworks.report.model.ReportRequest;
 import com.otterworks.report.model.ReportStatus;
+import com.otterworks.report.observability.ReportMetrics;
 import com.otterworks.report.repository.ReportRepository;
 import com.otterworks.report.util.ReportDateUtils;
 import org.slf4j.Logger;
@@ -41,15 +42,18 @@ public class ReportService {
     private final ReportGenerationWorker generationWorker;
     private final AppConfig appConfig;
     private final ObjectMapper objectMapper;
+    private final ReportMetrics metrics;
 
     public ReportService(
             ReportRepository reportRepository,
             ReportGenerationWorker generationWorker,
-            AppConfig appConfig) {
+            AppConfig appConfig,
+            ReportMetrics metrics) {
         this.reportRepository = reportRepository;
         this.generationWorker = generationWorker;
         this.appConfig = appConfig;
         this.objectMapper = new ObjectMapper();
+        this.metrics = metrics;
     }
 
     /**
@@ -79,8 +83,9 @@ public class ReportService {
         }
 
         Report saved = reportRepository.save(report);
-        logger.info("Created report request: id={}, name={}, type={}",
-                saved.getId(), saved.getReportName(), saved.getReportType());
+        metrics.requested(String.valueOf(saved.getCategory()), String.valueOf(saved.getReportType()));
+        logger.info("Created report request: id={}, name={}, type={}, category={}",
+                saved.getId(), saved.getReportName(), saved.getReportType(), saved.getCategory());
 
         // Defer async generation until after @Transactional commit so the worker thread
         // can see the persisted report (avoids race where findById returns empty).
@@ -133,6 +138,7 @@ public class ReportService {
 
         // Delete DB record first
         reportRepository.deleteById(id);
+        metrics.deleted();
         logger.info("Deleted report: {}", id);
 
         // Defer file deletion until after transaction commits so a rollback

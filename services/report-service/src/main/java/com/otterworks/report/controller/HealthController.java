@@ -3,12 +3,16 @@ package com.otterworks.report.controller;
 import com.otterworks.report.archive.ArchiveStoreRegistry;
 import com.otterworks.report.archive.ArchiveStoreType;
 import com.otterworks.report.archive.ArchiveStoreUnavailableException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.HashMap;
+import java.sql.Connection;
+import java.sql.SQLException;
+import javax.sql.DataSource;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -18,20 +22,37 @@ import java.util.Map;
 @RestController
 public class HealthController {
 
-    private final ArchiveStoreRegistry archive;
+    private static final Logger logger = LoggerFactory.getLogger(HealthController.class);
 
-    public HealthController(ArchiveStoreRegistry archive) {
+    private final ArchiveStoreRegistry archive;
+    private final DataSource dataSource;
+
+    public HealthController(ArchiveStoreRegistry archive, DataSource dataSource) {
         this.archive = archive;
+        this.dataSource = dataSource;
     }
 
+    /** Checks the report database; 503 with {@code "status": "degraded"} when it is unreachable. */
     @GetMapping("/health")
-    public Map<String, String> health() {
-        // LEGACY: Returns raw Map instead of a typed response object
-        Map<String, String> response = new HashMap<>();
-        response.put("status", "healthy");
+    public ResponseEntity<Map<String, Object>> health() {
+        boolean databaseUp = databaseHealthy();
+        Map<String, Object> checks = new LinkedHashMap<String, Object>();
+        checks.put("database", databaseUp ? "up" : "down");
+        Map<String, Object> response = new LinkedHashMap<String, Object>();
+        response.put("status", databaseUp ? "healthy" : "degraded");
         response.put("service", "report-service");
         response.put("version", "0.1.0");
-        return response;
+        response.put("checks", checks);
+        return ResponseEntity.status(databaseUp ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE).body(response);
+    }
+
+    private boolean databaseHealthy() {
+        try (Connection connection = dataSource.getConnection()) {
+            return connection.isValid(3);
+        } catch (SQLException e) {
+            logger.warn("Health check: database unreachable: {}", e.getMessage());
+            return false;
+        }
     }
 
     /**

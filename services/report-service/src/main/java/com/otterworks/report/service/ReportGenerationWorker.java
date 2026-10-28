@@ -6,6 +6,7 @@ import com.otterworks.report.model.Report;
 import com.otterworks.report.model.ReportCategory;
 import com.otterworks.report.model.ReportStatus;
 import com.otterworks.report.model.ReportType;
+import com.otterworks.report.observability.ReportMetrics;
 import com.otterworks.report.repository.ReportRepository;
 import com.otterworks.report.util.ReportDateUtils;
 import org.slf4j.Logger;
@@ -41,6 +42,7 @@ public class ReportGenerationWorker {
     private final ExcelReportGenerator excelGenerator;
     private final AppConfig appConfig;
     private final ObjectMapper objectMapper;
+    private final ReportMetrics metrics;
 
     public ReportGenerationWorker(
             ReportRepository reportRepository,
@@ -48,7 +50,9 @@ public class ReportGenerationWorker {
             PdfReportGenerator pdfGenerator,
             CsvReportGenerator csvGenerator,
             ExcelReportGenerator excelGenerator,
-            AppConfig appConfig) {
+            AppConfig appConfig,
+            ReportMetrics metrics) {
+        this.metrics = metrics;
         this.reportRepository = reportRepository;
         this.dataFetcher = dataFetcher;
         this.pdfGenerator = pdfGenerator;
@@ -77,6 +81,9 @@ public class ReportGenerationWorker {
         report.setStatus(ReportStatus.GENERATING);
         reportRepository.save(report);
 
+        long start = System.nanoTime();
+        String category = String.valueOf(report.getCategory());
+        String type = String.valueOf(report.getReportType());
         try {
             // Parse parameters
             Map<String, String> params = null;
@@ -104,6 +111,7 @@ public class ReportGenerationWorker {
             report.setFileSizeBytes(outputFile.length());
             report.setRowCount(data.size());
             reportRepository.save(report);
+            metrics.generated(category, type, "success", System.nanoTime() - start, data.size());
 
             String duration = ReportDateUtils.humanReadableDuration(report.getCreatedAt(), report.getCompletedAt());
             logger.info("Report {} completed: {} rows, {} bytes, took {}",
@@ -115,6 +123,7 @@ public class ReportGenerationWorker {
             report.setCompletedAt(new Date());
             report.setErrorMessage(e.getMessage());
             reportRepository.save(report);
+            metrics.generated(category, type, "failure", System.nanoTime() - start, 0);
         }
     }
 

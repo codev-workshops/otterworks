@@ -1,13 +1,18 @@
 package com.otterworks.report.config;
 
+import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.instrumentation.spring.web.v3_1.SpringWebTelemetry;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.ClientHttpRequestInterceptor;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
+
+import java.util.Arrays;
 
 /**
  * Application configuration — wires up RestTemplate and external service URLs.
@@ -47,7 +52,8 @@ public class AppConfig {
 
     // LEGACY: RestTemplate with Apache HttpComponents 4.x connection pool
     @Bean
-    public RestTemplate restTemplate() {
+    public RestTemplate restTemplate(
+            OpenTelemetry openTelemetry, ClientHttpRequestInterceptor requestIdPropagationInterceptor) {
         PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
         connectionManager.setMaxTotal(50);
         connectionManager.setDefaultMaxPerRoute(20);
@@ -60,7 +66,10 @@ public class AppConfig {
         factory.setConnectTimeout(connectionTimeout);
         factory.setReadTimeout(readTimeout);
 
-        return new RestTemplate(factory);
+        RestTemplate restTemplate = new RestTemplate(factory);
+        restTemplate.setInterceptors(Arrays.asList(
+                SpringWebTelemetry.create(openTelemetry).newInterceptor(), requestIdPropagationInterceptor));
+        return restTemplate;
     }
 
     public String getAnalyticsServiceUrl() {
