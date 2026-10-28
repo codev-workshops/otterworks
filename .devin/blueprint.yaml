@@ -1,7 +1,13 @@
 runs-on: default
 # One-time setup (e.g., install system tools, global CLIs).
 initialize: |
-  docker compose -f docker-compose.infra.yml pull
+  # Docker Hub rate-limits unauthenticated pulls (HTTP 429); route through Google's mirror.
+  sudo mkdir -p /etc/docker
+  [ -f /etc/docker/daemon.json ] || echo '{}' | sudo tee /etc/docker/daemon.json >/dev/null
+  sudo python3 -c "import json; p='/etc/docker/daemon.json'; d=json.load(open(p)); m=d.setdefault('registry-mirrors', []); 'https://mirror.gcr.io' in m or m.append('https://mirror.gcr.io'); json.dump(d, open(p, 'w'), indent=2)"
+  sudo systemctl restart docker
+  for i in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 1; done
+  n=0; until docker compose -f docker-compose.infra.yml pull -q; do n=$((n+1)); [ "$n" -ge 3 ] && exit 1; sleep 15; done
   # Serialized with retries: parallel builds overwhelm Docker's embedded DNS (127.0.0.11)
   # and dependency fetches (e.g. cargo's static.crates.io) intermittently fail to resolve.
   COMPOSE="docker compose -f docker-compose.infra.yml -f docker-compose.yml"
