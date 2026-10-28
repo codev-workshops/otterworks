@@ -84,9 +84,29 @@ impl ResponseError for ServiceError {
             ),
         };
 
+        if status.is_server_error() {
+            if let Some(backend) = match self {
+                ServiceError::S3Error(_) => Some("s3"),
+                ServiceError::DynamoError(_) => Some("dynamodb"),
+                ServiceError::SnsError(_) => Some("sns"),
+                _ => None,
+            } {
+                crate::middleware::FILE_BACKEND_ERRORS_TOTAL
+                    .with_label_values(&[backend])
+                    .inc();
+            }
+            tracing::error!(error = %self, error_type, "Request failed");
+        }
+
+        // Backend error text can carry bucket names, table names or SDK internals.
+        let message = if status.is_server_error() {
+            "Internal server error".to_string()
+        } else {
+            self.to_string()
+        };
         HttpResponse::build(status).json(ErrorResponse {
             error: error_type.to_string(),
-            message: self.to_string(),
+            message,
         })
     }
 }

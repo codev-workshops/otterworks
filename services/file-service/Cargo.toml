@@ -19,7 +19,7 @@ tracing-actix-web = "0.7"
 tracing-opentelemetry = "0.22"
 opentelemetry = "0.21"
 opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
-opentelemetry-otlp = "0.14"
+opentelemetry-otlp = { version = "0.14", default-features = false, features = ["http-proto", "reqwest-client", "trace"] }
 aws-config = "1.1"
 aws-sdk-s3 = "1.15"
 aws-sdk-dynamodb = "1.14"

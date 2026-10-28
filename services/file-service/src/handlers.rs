@@ -26,12 +26,52 @@ use crate::storage::S3Client;
 
 // -- Health & Metrics --
 
-pub async fn health() -> HttpResponse {
-    HttpResponse::Ok().json(HealthResponse {
-        status: "healthy".into(),
+const HEALTH_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+async fn check<F, T, E>(fut: F) -> &'static str
+where
+    F: std::future::Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    match tokio::time::timeout(HEALTH_CHECK_TIMEOUT, fut).await {
+        Ok(Ok(_)) => "healthy",
+        Ok(Err(err)) => {
+            tracing::warn!(error = %err, "Health dependency check failed");
+            "unhealthy"
+        }
+        Err(_) => {
+            tracing::warn!("Health dependency check timed out");
+            "unhealthy"
+        }
+    }
+}
+
+/// Reports 503 when S3 or the DynamoDB files table is unreachable.
+pub async fn health(s3: web::Data<S3Client>, meta: web::Data<MetadataClient>) -> HttpResponse {
+    let (s3_status, dynamodb_status) = tokio::join!(
+        check(s3.client.head_bucket().bucket(&s3.bucket).send()),
+        check(
+            meta.client
+                .describe_table()
+                .table_name(&meta.files_table)
+                .send()
+        ),
+    );
+    let healthy = s3_status == "healthy" && dynamodb_status == "healthy";
+    let body = HealthResponse {
+        status: if healthy { "healthy" } else { "unhealthy" }.into(),
         service: "file-service".into(),
         version: env!("CARGO_PKG_VERSION").into(),
-    })
+        checks: [("s3", s3_status), ("dynamodb", dynamodb_status)]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    };
+    if healthy {
+        HttpResponse::Ok().json(body)
+    } else {
+        HttpResponse::ServiceUnavailable().json(body)
+    }
 }
 
 pub async fn metrics() -> HttpResponse {
@@ -195,6 +235,7 @@ pub async fn upload_file(
         )
         .await;
 
+    middleware::FILE_UPLOAD_SIZE_BYTES.observe(size as f64);
     tracing::info!(file_id = %file_id, name = %file_meta.name, size = %size, "File uploaded");
 
     Ok(HttpResponse::Created().json(UploadResponse { file: file_meta }))
@@ -711,10 +752,55 @@ pub async fn list_activity(
 mod tests {
     use super::*;
 
+    fn unreachable_clients() -> (S3Client, MetadataClient) {
+        let creds = aws_sdk_s3::config::Credentials::new("test", "test", None, None, "test");
+        let s3 = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::Config::builder()
+                .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+                .region(aws_sdk_s3::config::Region::new("us-east-1"))
+                .endpoint_url("http://127.0.0.1:1")
+                .credentials_provider(creds.clone())
+                .retry_config(aws_sdk_s3::config::retry::RetryConfig::disabled())
+                .force_path_style(true)
+                .build(),
+        );
+        let dynamo = aws_sdk_dynamodb::Client::from_conf(
+            aws_sdk_dynamodb::Config::builder()
+                .behavior_version(aws_sdk_dynamodb::config::BehaviorVersion::latest())
+                .region(aws_sdk_dynamodb::config::Region::new("us-east-1"))
+                .endpoint_url("http://127.0.0.1:1")
+                .credentials_provider(creds)
+                .retry_config(aws_sdk_dynamodb::config::retry::RetryConfig::disabled())
+                .build(),
+        );
+        (
+            S3Client {
+                client: s3,
+                bucket: "files".into(),
+            },
+            MetadataClient {
+                client: dynamo,
+                files_table: "files".into(),
+                folders_table: "folders".into(),
+                versions_table: "versions".into(),
+                shares_table: "shares".into(),
+            },
+        )
+    }
+
     #[actix_rt::test]
-    async fn test_health_endpoint() {
-        let resp = health().await;
-        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    async fn test_health_returns_503_when_dependencies_are_unreachable() {
+        let (s3, meta) = unreachable_clients();
+        let resp = health(web::Data::new(s3), web::Data::new(meta)).await;
+        assert_eq!(
+            resp.status(),
+            actix_web::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        let body = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "unhealthy");
+        assert_eq!(json["checks"]["s3"], "unhealthy");
+        assert_eq!(json["checks"]["dynamodb"], "unhealthy");
     }
 
     #[actix_rt::test]
