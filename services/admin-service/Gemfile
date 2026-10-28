@@ -16,6 +16,7 @@ gem 'sidekiq', '~> 7.2'
 
 # Observability
 gem 'lograge', '~> 0.14'
+gem 'opentelemetry-exporter-otlp', '~> 0.26'
 gem 'opentelemetry-instrumentation-rails', '~> 0.30'
 gem 'opentelemetry-sdk', '~> 1.4'
 gem 'prometheus_exporter', '~> 2.1'
