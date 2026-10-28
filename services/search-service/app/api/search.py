@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import os
+import time
 
 import redis as redis_lib
 import structlog
 from flask import Blueprint, current_app, jsonify, request
 
-from app.api.health import SEARCH_COUNT
+from app.api.health import SEARCH_COUNT, SEARCH_DURATION, SEARCH_RESULTS
 from app.services.meilisearch_client import MeiliSearchService, get_search_analytics
 
 logger = structlog.get_logger()
@@ -36,6 +37,12 @@ def _chaos_active(key: str) -> bool:
         return False
 
 
+def _observe_query(kind: str, outcome: str, started: float, hits: int | None = None) -> None:
+    SEARCH_DURATION.labels(kind=kind, outcome=outcome).observe(time.monotonic() - started)
+    if hits is not None:
+        SEARCH_RESULTS.labels(kind=kind).observe(hits)
+
+
 def _get_service() -> MeiliSearchService:
     """Get the shared MeiliSearchService from app config."""
     return current_app.config["SEARCH_SERVICE"]
@@ -61,6 +68,7 @@ def search_documents() -> tuple:
     if not query:
         return jsonify({"error": "Query parameter 'q' is required"}), 400
 
+    started = time.monotonic()
     try:
         service = _get_service()
         results = service.search(
@@ -71,11 +79,21 @@ def search_documents() -> tuple:
             page_size=page_size,
         )
         SEARCH_COUNT.inc()
-        logger.info("search_executed", query=query, result_count=results.total)
+        outcome = "hit" if results.total else "empty"
+        _observe_query("search", outcome, started, results.total)
+        logger.info(
+            "search_executed",
+            query=query,
+            result_count=results.total,
+            doc_type=doc_type,
+            outcome=outcome,
+        )
         return jsonify(results.to_dict()), 200
     except ValueError as e:
+        _observe_query("search", "invalid", started)
         return jsonify({"error": str(e)}), 400
     except Exception:
+        _observe_query("search", "error", started)
         logger.exception("search_failed", query=query)
         return jsonify({"error": "Search failed"}), 500
 
@@ -107,11 +125,14 @@ def suggest() -> tuple:
         ranked = sorted(raw_suggestions, key=lambda s: s["_rankingScore"], reverse=True)  # type: ignore[index]
         return jsonify({"suggestions": ranked, "query": prefix}), 200
 
+    started = time.monotonic()
     try:
         service = _get_service()
         suggestions = service.suggest(prefix)
+        _observe_query("suggest", "hit" if suggestions else "empty", started, len(suggestions))
         return jsonify({"suggestions": suggestions, "query": prefix}), 200
     except Exception:
+        _observe_query("suggest", "error", started)
         logger.exception("suggest_failed", prefix=prefix)
         return jsonify({"suggestions": [], "query": prefix}), 200
 
@@ -137,6 +158,7 @@ def advanced_search() -> tuple:
     except (ValueError, TypeError):
         return jsonify({"error": "Invalid page or size parameter"}), 400
 
+    started = time.monotonic()
     try:
         service = _get_service()
         results = service.advanced_search(
@@ -150,9 +172,18 @@ def advanced_search() -> tuple:
             page_size=page_size,
         )
         SEARCH_COUNT.inc()
-        logger.info("advanced_search_executed", query=query, result_count=results.total)
+        outcome = "hit" if results.total else "empty"
+        _observe_query("advanced", outcome, started, results.total)
+        logger.info(
+            "advanced_search_executed",
+            query=query,
+            result_count=results.total,
+            doc_type=doc_type,
+            outcome=outcome,
+        )
         return jsonify(results.to_dict()), 200
     except Exception:
+        _observe_query("advanced", "error", started)
         logger.exception("advanced_search_failed")
         return jsonify({"error": "Advanced search failed"}), 500
 

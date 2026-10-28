@@ -29,6 +29,17 @@ SEARCH_COUNT = Counter(
     "search_service_searches_total",
     "Total number of search queries executed",
 )
+SEARCH_DURATION = Histogram(
+    "search_service_query_duration_seconds",
+    "Search query latency by kind (search, advanced, suggest) and outcome",
+    ["kind", "outcome"],
+)
+SEARCH_RESULTS = Histogram(
+    "search_service_query_results",
+    "Number of hits returned per search query",
+    ["kind"],
+    buckets=(0, 1, 5, 10, 25, 50, 100, 500, 1000),
+)
 INDEX_COUNT = Counter(
     "search_service_index_operations_total",
     "Total number of index operations",
