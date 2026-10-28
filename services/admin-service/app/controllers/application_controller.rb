@@ -2,8 +2,11 @@ class ApplicationController < ActionController::API
   before_action :set_request_metadata
 
   rescue_from StandardError do |e|
-    Rails.logger.error("Unhandled error: #{e.message}")
-    render json: { error: 'Internal server error' }, status: :internal_server_error
+    ObservabilityMetrics.record_unhandled_error(e)
+    Rails.logger.error({ event: 'unhandled_error', error_class: e.class.name, message: e.message,
+                         path: request.path }.to_json)
+    render json: { error: 'Internal server error', request_id: request.request_id },
+           status: :internal_server_error
   end
 
   rescue_from ActiveRecord::RecordNotFound do

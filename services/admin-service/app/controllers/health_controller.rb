@@ -58,6 +58,7 @@ class HealthController < ActionController::API
       rescue StandardError
         0
       end}
+      #{ObservabilityMetrics.to_prometheus_text}
     METRICS
   end
 end
