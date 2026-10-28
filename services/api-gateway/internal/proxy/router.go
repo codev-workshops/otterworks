@@ -7,10 +7,21 @@ import (
 	"net/url"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/Cognition-Partner-Workshops/otterworks/services/api-gateway/internal/middleware"
+)
+
+var upstreamErrorsTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: "api_gateway",
+		Name:      "upstream_errors_total",
+		Help:      "Proxied requests that failed upstream, by route prefix and reason.",
+	},
+	[]string{"route", "reason"},
 )
 
 // Route defines a mapping from a URL prefix to a backend service.
@@ -21,10 +32,12 @@ type Route struct {
 
 // RouterConfig holds configuration for the reverse proxy router.
 type RouterConfig struct {
-	Routes         []Route
-	CBManager      *CircuitBreakerManager
-	Logger         zerolog.Logger
-	EnableTracing  bool
+	Routes    []Route
+	CBManager *CircuitBreakerManager
+	Logger    zerolog.Logger
+	// EnableTracing wraps the upstream transport so each proxied call gets a
+	// client span and forwards W3C traceparent to the backend.
+	EnableTracing bool
 }
 
 // NewRouter creates a chi router with all service routes mounted.
@@ -60,6 +73,9 @@ func newProxyHandler(route Route, cfg RouterConfig) http.HandlerFunc {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	if cfg.EnableTracing {
+		proxy.Transport = otelhttp.NewTransport(http.DefaultTransport)
+	}
 
 	// Wrap the default director to forward authenticated user identity.
 	// The auth-service issues JWTs with the user ID in the standard "sub" claim
@@ -79,8 +95,10 @@ func newProxyHandler(route Route, cfg RouterConfig) http.HandlerFunc {
 	}
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		upstreamErrorsTotal.WithLabelValues(route.Prefix, "proxy_error").Inc()
 		cfg.Logger.Error().
 			Err(err).
+			Str("request_id", middleware.GetRequestID(r.Context())).
 			Str("target", route.TargetURL).
 			Str("path", r.URL.Path).
 			Str("method", r.Method).
@@ -95,15 +113,14 @@ func newProxyHandler(route Route, cfg RouterConfig) http.HandlerFunc {
 	}
 
 	var handler http.Handler = proxy
-	if cfg.EnableTracing {
-		handler = otelhttp.NewHandler(proxy, "proxy:"+route.Prefix)
-	}
 
 	cb := cfg.CBManager.Get(route.Prefix)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := cb.Execute(handler, w, r); err != nil {
+			upstreamErrorsTotal.WithLabelValues(route.Prefix, "circuit_open").Inc()
 			cfg.Logger.Warn().
+				Str("request_id", middleware.GetRequestID(r.Context())).
 				Str("circuit_breaker", route.Prefix).
 				Str("state", cb.State().String()).
 				Msg("circuit breaker rejected request")
