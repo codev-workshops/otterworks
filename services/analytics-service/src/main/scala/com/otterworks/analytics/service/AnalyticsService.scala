@@ -1,5 +1,6 @@
 package com.otterworks.analytics.service
 
+import com.otterworks.analytics.api.HealthRoutes
 import com.otterworks.analytics.model.*
 import com.otterworks.analytics.repository.MetricsRepository
 import org.slf4j.LoggerFactory
@@ -25,6 +26,7 @@ class AnalyticsService(repository: MetricsRepository)(using ec: ExecutionContext
   ): Future[AnalyticsEvent] =
     val event = AnalyticsEvent.create(eventType, userId, resourceId, resourceType, metadata)
     logger.info("Tracking event: type={}, user={}, resource={}", event.eventType, event.userId, event.resourceId)
+    HealthRoutes.eventsReceivedTotal.labels(event.eventType).inc()
     repository.storeEvent(event).map(_ => event)
 
   /** Get aggregated dashboard metrics for the given period. */
