@@ -15,7 +15,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
-tracing-actix-web = "0.7"
+tracing-actix-web = { version = "0.7", features = ["opentelemetry_0_21"] }
 tracing-opentelemetry = "0.22"
 opentelemetry = "0.21"
 opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }

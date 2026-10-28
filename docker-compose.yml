@@ -107,8 +107,10 @@ services:
       POSTGRES_DB: otterworks
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      # file-service exports OTLP over gRPC (opentelemetry-otlp tonic)
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_SERVICE_NAME: file-service
+      OTEL_SDK_DISABLED: 'false'
       S3_BUCKET: otterworks-files
       DYNAMODB_TABLE: otterworks-file-metadata
       SNS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:otterworks-events

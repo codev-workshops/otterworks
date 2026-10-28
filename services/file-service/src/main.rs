@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use actix_web::{middleware as actix_middleware, web, App, HttpServer};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 mod config;
 mod errors;
@@ -11,17 +11,25 @@ mod metadata;
 mod middleware;
 mod models;
 mod storage;
+mod telemetry;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenvy::dotenv().ok();
 
+    let log_filter = tracing_subscriber::EnvFilter::new(
+        std::env::var("RUST_LOG").unwrap_or_else(|_| "file_service=debug,actix_web=info".into()),
+    );
+    let span_filter = Targets::new()
+        .with_target("tracing_actix_web", tracing::Level::INFO)
+        .with_target("file_service", tracing::Level::INFO);
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "file_service=debug,actix_web=info".into()),
-        ))
-        .with(tracing_subscriber::fmt::layer().json())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_filter(log_filter),
+        )
+        .with(telemetry::otel_layer().map(|layer| layer.with_filter(span_filter)))
         .init();
 
     let app_config = config::AppConfig::from_env();
@@ -48,7 +56,7 @@ async fn main() -> std::io::Result<()> {
     let events_data = web::Data::new(event_publisher);
     let redis_data = web::Data::new(redis_cm);
 
-    HttpServer::new(move || {
+    let result = HttpServer::new(move || {
         App::new()
             .wrap(tracing_actix_web::TracingLogger::default())
             .wrap(actix_middleware::Compress::default())
@@ -98,5 +106,8 @@ async fn main() -> std::io::Result<()> {
     })
     .bind(format!("0.0.0.0:{port}"))?
     .run()
-    .await
+    .await;
+
+    telemetry::shutdown();
+    result
 }
