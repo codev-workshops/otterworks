@@ -7,7 +7,13 @@ RUN pip install --no-cache-dir \
     "uvicorn[standard]>=0.29,<1" \
     "pydantic>=2.6,<3" \
     "pydantic-settings>=2.2,<3" \
-    "psycopg[binary]>=3.2,<4"
+    "psycopg[binary]>=3.2,<4" \
+    "prometheus-client>=0.20,<1" \
+    "structlog>=24.1,<26" \
+    "opentelemetry-sdk>=1.27,<2" \
+    "opentelemetry-exporter-otlp-proto-http>=1.27,<2" \
+    "opentelemetry-instrumentation-fastapi>=0.48b0,<1" \
+    "opentelemetry-instrumentation-psycopg>=0.48b0,<1"
 COPY app ./app
 COPY db ./db
 COPY scripts ./scripts
