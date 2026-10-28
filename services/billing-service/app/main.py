@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import time
 from contextlib import asynccontextmanager
 from datetime import date
 from typing import Annotated
 from uuid import UUID
 
 import psycopg
+import structlog
 from fastapi import FastAPI, HTTPException, Path, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -13,7 +15,19 @@ from pydantic import BaseModel
 from app.config import settings
 from app.db import connect, migrate, reset
 from app.domain import catalog, change_plan, entitlement
+from app.observability import (
+    ENTITLEMENT_LOOKUPS,
+    PLAN_CHANGE_SECONDS,
+    PLAN_CHANGES,
+    configure_logging,
+    configure_tracing,
+    install_request_middleware,
+    metrics_response,
+)
 from app.repository import PostgresPlansRepository
+
+configure_logging(settings.log_format)
+logger = structlog.get_logger("billing")
 
 
 @asynccontextmanager
@@ -29,7 +43,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+install_request_middleware(app)
+configure_tracing(app, settings.tracing_enabled)
 
 
 class PlanChange(BaseModel):
@@ -43,8 +60,14 @@ def health() -> dict[str, str]:
         with connect() as connection:
             connection.execute("SELECT 1")
     except psycopg.Error as error:
+        logger.warning("health_check_failed", dependency="postgres", error=type(error).__name__)
         raise HTTPException(status_code=503, detail="database unavailable") from error
     return {"status": "healthy", "service": settings.app_name}
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics() -> Response:
+    return metrics_response()
 
 
 @app.post("/internal/reset", status_code=204)
@@ -84,7 +107,17 @@ def get_entitlement(
             on,
         )
     if row is None:
+        ENTITLEMENT_LOOKUPS.labels("not_found").inc()
+        logger.info("entitlement_lookup", tenant_id=str(tenant_id), on=on.isoformat(), found=False)
         raise HTTPException(status_code=404, detail="entitlement not found")
+    ENTITLEMENT_LOOKUPS.labels("found").inc()
+    logger.info(
+        "entitlement_lookup",
+        tenant_id=str(tenant_id),
+        on=on.isoformat(),
+        found=True,
+        plan_code=row.plan_code,
+    )
     return {
         "tenant_id": str(row.tenant_id),
         "plan_code": row.plan_code,
@@ -98,6 +131,8 @@ def get_entitlement(
 
 @app.post("/api/tenants/{tenant_id}/plan-change")
 def change_tenant_plan(tenant_id: Annotated[UUID, Path()], request: PlanChange) -> dict:
+    start = time.perf_counter()
+    outcome = "error"
     try:
         with connect() as connection:
             repository = PostgresPlansRepository(connection)
@@ -107,6 +142,7 @@ def change_tenant_plan(tenant_id: Annotated[UUID, Path()], request: PlanChange) 
                 request.plan_id,
                 request.effective_on,
             )
+            outcome = "created"
             return {
                 "latest_plan": str(created.plan_id),
                 "latest_start": created.starts_on.isoformat(),
@@ -121,9 +157,21 @@ def change_tenant_plan(tenant_id: Annotated[UUID, Path()], request: PlanChange) 
                 ],
             }
     except psycopg.errors.ForeignKeyViolation as error:
+        outcome = "invalid"
         raise HTTPException(status_code=400, detail="invalid plan change") from error
     except psycopg.errors.UniqueViolation as error:
+        outcome = "conflict"
         raise HTTPException(
             status_code=409,
             detail="this plan change has already been requested",
         ) from error
+    finally:
+        PLAN_CHANGES.labels(outcome).inc()
+        PLAN_CHANGE_SECONDS.labels(outcome).observe(time.perf_counter() - start)
+        logger.info(
+            "plan_change",
+            tenant_id=str(tenant_id),
+            plan_id=str(request.plan_id),
+            effective_on=request.effective_on.isoformat(),
+            outcome=outcome,
+        )
