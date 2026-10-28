@@ -2,7 +2,9 @@ package com.otterworks.analytics.service
 
 import akka.actor.typed.ActorSystem
 import akka.stream.scaladsl.{Sink, Source}
+import com.otterworks.analytics.api.HealthRoutes
 import com.otterworks.analytics.config.{AppConfig, SqsConfig}
+import io.prometheus.client.{Counter, Histogram}
 import org.slf4j.LoggerFactory
 import io.circe.parser.decode
 import io.circe.generic.auto.*
@@ -68,14 +70,17 @@ class EventProcessor(
           } match
             case Success(msgs) => msgs
             case Failure(ex) =>
+              EventProcessor.pollErrors.inc()
               logger.warn("Failed to receive messages from SQS, will retry", ex)
               List.empty
         }
       }
       .mapConcat(identity)
       .mapAsync(4) { message =>
+        val timer = EventProcessor.processingDuration.startTimer()
         decode[SqsEventPayload](message.body()) match
           case Right(payload) =>
+            HealthRoutes.eventsReceivedTotal.labels(HealthRoutes.eventTypeLabel(payload.eventType), "sqs").inc()
             analyticsService
               .trackEvent(
                 payload.eventType,
@@ -92,14 +97,22 @@ class EventProcessor(
                     .build()
                   sqsClient.deleteMessage(deleteReq)
                 } match
-                  case Success(_) => logger.debug("Processed SQS event: {}", event.eventId)
-                  case Failure(ex) => logger.error("Failed to delete SQS message for event {}: {}", event.eventId, ex.getMessage)
+                  case Success(_) =>
+                    EventProcessor.messages.labels("processed").inc()
+                    logger.debug("Processed SQS event: {}", event.eventId)
+                  case Failure(ex) =>
+                    EventProcessor.messages.labels("delete_failed").inc()
+                    logger.error("Failed to delete SQS message for event {}", event.eventId, ex)
               }
               .recover { case ex =>
-                logger.error("Failed to process event from SQS: {}", ex.getMessage)
+                EventProcessor.messages.labels("failed").inc()
+                logger.error("Failed to process event from SQS", ex)
               }
+              .andThen { case _ => timer.observeDuration() }
           case Left(err) =>
-            logger.error("Failed to decode SQS message: {}", err.getMessage)
+            EventProcessor.messages.labels("decode_error").inc()
+            timer.observeDuration()
+            logger.error("Failed to decode SQS message", err)
             Try {
               val deleteReq = DeleteMessageRequest.builder()
                 .queueUrl(config.sqs.eventsQueueUrl)
@@ -108,9 +121,26 @@ class EventProcessor(
               sqsClient.deleteMessage(deleteReq)
             } match
               case Success(_) => logger.warn("Deleted undecodable SQS message")
-              case Failure(ex) => logger.error("Failed to delete undecodable SQS message: {}", ex.getMessage)
+              case Failure(ex) => logger.error("Failed to delete undecodable SQS message", ex)
             Future.successful(())
       }
       .runWith(Sink.ignore)
 
     logger.info("SQS event processor stream started"): Unit
+
+object EventProcessor:
+  val messages: Counter = Counter.build()
+    .name("analytics_sqs_messages_total")
+    .help("SQS messages handled, by outcome")
+    .labelNames("outcome")
+    .register()
+
+  val pollErrors: Counter = Counter.build()
+    .name("analytics_sqs_poll_errors_total")
+    .help("Failed SQS ReceiveMessage calls")
+    .register()
+
+  val processingDuration: Histogram = Histogram.build()
+    .name("analytics_sqs_processing_duration_seconds")
+    .help("Time to decode, store and delete one SQS message")
+    .register()

@@ -26,7 +26,8 @@ class EventRoutes(analyticsService: AnalyticsService):
               request.metadata.getOrElse(Map.empty)
             )
           ) { event =>
-            logger.info("Event tracked: {}", event.eventId)
+            HealthRoutes.eventsReceivedTotal.labels(HealthRoutes.eventTypeLabel(event.eventType), "http").inc()
+            logger.debug("Event tracked: {}", event.eventId)
             complete(StatusCodes.Accepted, AcceptedResponse("accepted", event.eventId))
           }
         }
