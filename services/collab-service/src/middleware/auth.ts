@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import type { Socket } from 'socket.io';
 import type { ExtendedError } from 'socket.io/dist/namespace';
 import type { Logger } from 'pino';
+import type { MetricsCollector } from '../metrics';
 
 export interface AuthenticatedUser {
   userId: string;
@@ -24,13 +25,18 @@ interface JwtPayload {
   exp?: number;
 }
 
-export function createAuthMiddleware(jwtSecret: string, logger: Logger) {
+export function createAuthMiddleware(
+  jwtSecret: string,
+  logger: Logger,
+  metrics?: MetricsCollector,
+) {
   return (socket: Socket, next: (err?: ExtendedError) => void): void => {
     const token =
       socket.handshake.auth?.token ||
       socket.handshake.headers?.authorization?.replace('Bearer ', '');
 
     if (!token) {
+      metrics?.connectionErrors.inc({ reason: 'auth_missing_token' });
       logger.warn({ socketId: socket.id }, 'connection_rejected: no token provided');
       next(new Error('Authentication required'));
       return;
@@ -52,6 +58,7 @@ export function createAuthMiddleware(jwtSecret: string, logger: Logger) {
       );
       next();
     } catch (err) {
+      metrics?.connectionErrors.inc({ reason: 'auth_invalid_token' });
       logger.warn(
         { socketId: socket.id, error: (err as Error).message },
         'connection_rejected: invalid token',
