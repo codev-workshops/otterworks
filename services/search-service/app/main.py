@@ -15,17 +15,30 @@ from app.api.index import index_bp
 from app.api.search import search_bp
 from app.config import AppConfig
 from app.middleware.auth import require_auth
+from app.observability import add_trace_context, configure_tracing, install_request_context
 from app.services.meilisearch_client import MeiliSearchService
 from app.services.sqs_consumer import SQSConsumer
 
 logger = structlog.get_logger()
 
 
-def configure_logging(log_level: str) -> None:
-    """Configure structured JSON logging via structlog."""
+def _add_service(_logger, _method: str, event_dict: dict) -> dict:
+    event_dict.setdefault("service", "search-service")
+    return event_dict
+
+
+def configure_logging(log_level: str, log_format: str = "json") -> None:
+    """Configure structured logging via structlog (JSON unless ``LOG_FORMAT=text``)."""
+    renderer = (
+        structlog.dev.ConsoleRenderer(colors=False)
+        if log_format == "text"
+        else structlog.processors.JSONRenderer()
+    )
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
+            _add_service,
+            add_trace_context,
             structlog.stdlib.filter_by_level,
             structlog.stdlib.add_logger_name,
             structlog.stdlib.add_log_level,
@@ -34,7 +47,7 @@ def configure_logging(log_level: str) -> None:
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
             structlog.processors.UnicodeDecoder(),
-            structlog.processors.JSONRenderer(),
+            renderer,
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
         context_class=dict,
@@ -53,10 +66,17 @@ def create_app(config: AppConfig | None = None) -> Flask:
     if config is None:
         config = AppConfig()
 
-    configure_logging(config.log_level)
+    configure_logging(config.log_level, config.log_format)
 
     app = Flask(__name__)
-    CORS(app, origins=["http://localhost:3000", "http://localhost:4200"])
+    CORS(
+        app,
+        origins=["http://localhost:3000", "http://localhost:4200"],
+        expose_headers=["X-Request-ID"],
+    )
+    # Tracing first so its before_request hook opens the server span before ours runs.
+    configure_tracing(app, "search-service", config.tracing_enabled)
+    install_request_context(app)
 
     # Store config on the app
     app.config["APP_CONFIG"] = config

@@ -56,6 +56,10 @@ class AppConfig:
         default_factory=lambda: os.getenv("FLASK_DEBUG", "false").lower() == "true"
     )
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
+    log_format: str = field(default_factory=lambda: os.getenv("LOG_FORMAT", "json"))
+    tracing_enabled: bool = field(
+        default_factory=lambda: os.getenv("TRACING_ENABLED", "true").lower() == "true"
+    )
     meilisearch: MeiliSearchConfig = field(default_factory=MeiliSearchConfig)
     sqs: SQSConfig = field(default_factory=SQSConfig)
     auth: AuthConfig = field(default_factory=AuthConfig)
