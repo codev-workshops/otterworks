@@ -4,7 +4,7 @@ import akka.http.scaladsl.model.{ContentTypes, HttpEntity, StatusCodes}
 import akka.http.scaladsl.server.Directives.*
 import akka.http.scaladsl.server.Route
 import com.otterworks.analytics.service.AnalyticsService
-import io.prometheus.client.{CollectorRegistry, Counter, Gauge, Histogram}
+import io.prometheus.client.{CollectorRegistry, Counter, Gauge}
 import io.prometheus.client.exporter.common.TextFormat
 import spray.json.*
 
@@ -17,7 +17,11 @@ import scala.util.{Failure, Success}
  *   GET /health  - Service health check
  *   GET /metrics - Prometheus metrics
  */
-class HealthRoutes(analyticsService: AnalyticsService)(using ec: ExecutionContext):
+class HealthRoutes(analyticsService: AnalyticsService, storageFallback: Boolean = false)(using ec: ExecutionContext):
+
+  // A fallback to the in-memory store keeps serving (200) but reports
+  // "degraded": the probes must not restart the pod, but data is not durable.
+  private val okStatus = if storageFallback then "degraded" else "healthy"
 
   val routes: Route = concat(
     path("health") {
@@ -26,7 +30,7 @@ class HealthRoutes(analyticsService: AnalyticsService)(using ec: ExecutionContex
           case Success(count) =>
             complete(HttpEntity(
               ContentTypes.`application/json`,
-              s"""{"status":"healthy","service":"analytics-service","eventsProcessed":$count}"""
+              s"""{"status":"$okStatus","service":"analytics-service","eventsProcessed":$count,"storageFallback":$storageFallback}"""
             ))
           case Failure(_) =>
             complete(StatusCodes.ServiceUnavailable, HttpEntity(
@@ -47,20 +51,20 @@ class HealthRoutes(analyticsService: AnalyticsService)(using ec: ExecutionContex
   )
 
 object HealthRoutes:
-  /** Prometheus metrics counters shared across the service. */
+  private val eventTypePattern = "^[a-z0-9_]{1,32}(\\.[a-z0-9_]{1,32}){0,2}$".r
+
+  /** Bounded `event_type` label: anything outside the `noun.verb` shape is "other". */
+  def eventTypeLabel(eventType: String): String =
+    if eventTypePattern.matches(eventType) then eventType else "other"
+
   val eventsReceivedTotal: Counter = Counter.build()
     .name("analytics_events_received_total")
     .help("Total number of analytics events received")
-    .labelNames("event_type")
+    .labelNames("event_type", "source")
     .register()
 
-  val requestDuration: Histogram = Histogram.build()
-    .name("analytics_request_duration_seconds")
-    .help("HTTP request duration in seconds")
-    .labelNames("method", "path", "status")
-    .register()
-
-  val activeConnections: Gauge = Gauge.build()
-    .name("analytics_active_connections")
-    .help("Number of active HTTP connections")
+  val repositoryBackend: Gauge = Gauge.build()
+    .name("analytics_repository_backend")
+    .help("Active metrics store backend (1 = active); in-memory after a Postgres fallback")
+    .labelNames("backend")
     .register()

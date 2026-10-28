@@ -24,7 +24,7 @@ class AnalyticsService(repository: MetricsRepository)(using ec: ExecutionContext
       metadata: Map[String, String]
   ): Future[AnalyticsEvent] =
     val event = AnalyticsEvent.create(eventType, userId, resourceId, resourceType, metadata)
-    logger.info("Tracking event: type={}, user={}, resource={}", event.eventType, event.userId, event.resourceId)
+    logger.debug("Tracking event: type={}, resource={}", event.eventType, event.resourceId)
     repository.storeEvent(event).map(_ => event)
 
   /** Get aggregated dashboard metrics for the given period. */
