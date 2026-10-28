@@ -67,6 +67,9 @@ func newProxyHandler(route Route, cfg RouterConfig) http.HandlerFunc {
 	defaultDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		defaultDirector(req)
+		if id := middleware.GetRequestID(req.Context()); id != "" {
+			req.Header.Set("X-Request-ID", id)
+		}
 		if claims := middleware.GetJWTClaims(req.Context()); claims != nil {
 			userID := claims.Subject
 			if userID == "" {
@@ -96,6 +99,8 @@ func newProxyHandler(route Route, cfg RouterConfig) http.HandlerFunc {
 
 	var handler http.Handler = proxy
 	if cfg.EnableTracing {
+		// The client transport injects traceparent so backend spans join the gateway trace.
+		proxy.Transport = otelhttp.NewTransport(http.DefaultTransport)
 		handler = otelhttp.NewHandler(proxy, "proxy:"+route.Prefix)
 	}
 
