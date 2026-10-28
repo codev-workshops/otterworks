@@ -95,6 +95,7 @@ pub struct HealthResponse {
     pub status: String,
     pub service: String,
     pub version: String,
+    pub checks: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Serialize)]

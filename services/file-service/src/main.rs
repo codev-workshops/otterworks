@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use actix_web::{middleware as actix_middleware, web, App, HttpServer};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
 mod errors;
@@ -10,19 +9,14 @@ mod handlers;
 mod metadata;
 mod middleware;
 mod models;
+mod observability;
 mod storage;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenvy::dotenv().ok();
 
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "file_service=debug,actix_web=info".into()),
-        ))
-        .with(tracing_subscriber::fmt::layer().json())
-        .init();
+    let tracer_provider = observability::init_telemetry();
 
     let app_config = config::AppConfig::from_env();
     let s3_client = storage::S3Client::new(&app_config.aws).await;
@@ -50,9 +44,11 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .wrap(tracing_actix_web::TracingLogger::default())
-            .wrap(actix_middleware::Compress::default())
             .wrap(middleware::RequestId)
+            .wrap(actix_middleware::Compress::default())
+            .wrap(tracing_actix_web::TracingLogger::<
+                observability::FileServiceRootSpan,
+            >::new())
             .app_data(config_data.clone())
             .app_data(s3_data.clone())
             .app_data(meta_data.clone())
@@ -98,5 +94,8 @@ async fn main() -> std::io::Result<()> {
     })
     .bind(format!("0.0.0.0:{port}"))?
     .run()
-    .await
+    .await?;
+
+    let _ = tracer_provider.force_flush();
+    Ok(())
 }
