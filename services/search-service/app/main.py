@@ -17,6 +17,7 @@ from app.config import AppConfig
 from app.middleware.auth import require_auth
 from app.services.meilisearch_client import MeiliSearchService
 from app.services.sqs_consumer import SQSConsumer
+from app.tracing import add_trace_context, configure_tracing
 
 logger = structlog.get_logger()
 
@@ -29,6 +30,7 @@ def configure_logging(log_level: str) -> None:
             structlog.stdlib.filter_by_level,
             structlog.stdlib.add_logger_name,
             structlog.stdlib.add_log_level,
+            add_trace_context,
             structlog.stdlib.PositionalArgumentsFormatter(),
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.StackInfoRenderer(),
@@ -56,6 +58,7 @@ def create_app(config: AppConfig | None = None) -> Flask:
     configure_logging(config.log_level)
 
     app = Flask(__name__)
+    configure_tracing(app)
     CORS(app, origins=["http://localhost:3000", "http://localhost:4200"])
 
     # Store config on the app

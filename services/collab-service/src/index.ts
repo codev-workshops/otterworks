@@ -1,3 +1,4 @@
+import './tracing';
 import express from 'express';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
