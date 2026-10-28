@@ -2,38 +2,25 @@
 <configuration>
     <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
 
-    <springProfile name="dev">
-        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-            <encoder>
-                <pattern>%d{ISO8601} %highlight(%-5level) [%thread] %cyan(%logger{36}) - %msg%n</pattern>
-            </encoder>
-        </appender>
-        <root level="INFO">
-            <appender-ref ref="CONSOLE"/>
-        </root>
-    </springProfile>
+    <!-- LOG_FORMAT / logging.format: "json" (default) or "text" -->
+    <springProperty scope="context" name="LOG_FORMAT" source="logging.format" defaultValue="json"/>
 
-    <springProfile name="prod">
-        <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
-            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
-                <customFields>{"service":"auth-service"}</customFields>
-                <includeMdcKeyName>traceId</includeMdcKeyName>
-                <includeMdcKeyName>spanId</includeMdcKeyName>
-            </encoder>
-        </appender>
-        <root level="INFO">
-            <appender-ref ref="JSON"/>
-        </root>
-    </springProfile>
+    <appender name="json" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>{"service":"auth-service"}</customFields>
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+            <includeMdcKeyName>requestId</includeMdcKeyName>
+        </encoder>
+    </appender>
 
-    <springProfile name="!dev &amp; !prod">
-        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-            <encoder>
-                <pattern>%d{ISO8601} %-5level [%thread] %logger{36} - %msg%n</pattern>
-            </encoder>
-        </appender>
-        <root level="INFO">
-            <appender-ref ref="CONSOLE"/>
-        </root>
-    </springProfile>
+    <appender name="text" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{ISO8601} %-5level [%thread] [%X{requestId:-}] [%X{traceId:-}] %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="${LOG_FORMAT}"/>
+    </root>
 </configuration>
