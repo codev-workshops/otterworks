@@ -48,6 +48,13 @@ lazy val root = project
       "io.prometheus" % "simpleclient_common" % "0.16.0",
       "io.prometheus" % "simpleclient_hotspot" % "0.16.0",
 
+      // Tracing (OTLP/HTTP, configured via standard OTEL_* env vars)
+      "io.opentelemetry" % "opentelemetry-api" % "1.36.0",
+      "io.opentelemetry" % "opentelemetry-sdk" % "1.36.0",
+      "io.opentelemetry" % "opentelemetry-sdk-extension-autoconfigure" % "1.36.0",
+      "io.opentelemetry" % "opentelemetry-exporter-otlp" % "1.36.0",
+      "io.opentelemetry" % "opentelemetry-sdk-testing" % "1.36.0" % Test,
+
       // Testing
       "org.scalatest" %% "scalatest" % "3.2.18" % Test,
       "com.typesafe.akka" %% "akka-http-testkit" % "10.5.3" % Test cross CrossVersion.for3Use2_13,

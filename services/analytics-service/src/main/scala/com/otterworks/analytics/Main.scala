@@ -9,6 +9,7 @@ import com.otterworks.analytics.api.{AnalyticsRoutes, EventRoutes, HealthRoutes,
 import com.otterworks.analytics.batch.MarketSeeder
 import com.otterworks.analytics.config.AppConfig
 import com.otterworks.analytics.db.AnalyticsDb
+import com.otterworks.analytics.observability.Observability
 import com.otterworks.analytics.repository.{InMemoryMetricsRepository, MarketRepository, MetricsRepository, PostgresMetricsRepository}
 import com.otterworks.analytics.service.{AnalyticsService, EventProcessor, MarginService}
 
@@ -22,6 +23,7 @@ object Main:
     given ec: ExecutionContextExecutor = system.executionContext
 
     val config = AppConfig.load()
+    val openTelemetry = Observability.initOpenTelemetry()
 
     // Wire up the metrics store. The golden default is the durable PostgreSQL
     // store (the "before" state for the S3/Iceberg lakehouse migration); the
@@ -87,7 +89,7 @@ object Main:
     val host = config.server.host
     val port = config.server.port
 
-    val binding = Http().newServerAt(host, port).bind(routes)
+    val binding = Http().newServerAt(host, port).bind(Observability.instrument(openTelemetry)(routes))
     binding.onComplete {
       case Success(b) =>
         system.log.info(s"Analytics Service started at http://${b.localAddress.getHostString}:${b.localAddress.getPort}")

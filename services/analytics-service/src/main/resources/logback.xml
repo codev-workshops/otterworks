@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+  <!-- JSON by default; LOG_FORMAT=text selects the human-readable appender. -->
+  <appender name="json" class="ch.qos.logback.core.ConsoleAppender">
     <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <includeMdcKeyName>requestId</includeMdcKeyName>
       <includeMdcKeyName>traceId</includeMdcKeyName>
       <includeMdcKeyName>spanId</includeMdcKeyName>
       <fieldNames>
@@ -15,11 +17,17 @@
     </encoder>
   </appender>
 
+  <appender name="text" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{ISO8601} %-5level [%thread] %logger{36} [req=%X{requestId:-} trace=%X{traceId:-}] - %msg%n</pattern>
+    </encoder>
+  </appender>
+
   <logger name="com.otterworks.analytics" level="DEBUG"/>
   <logger name="akka" level="INFO"/>
   <logger name="slick" level="INFO"/>
 
   <root level="INFO">
-    <appender-ref ref="STDOUT"/>
+    <appender-ref ref="${LOG_FORMAT:-json}"/>
   </root>
 </configuration>

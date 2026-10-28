@@ -4,6 +4,7 @@ import akka.actor.typed.ActorSystem
 import akka.stream.scaladsl.{Sink, Source}
 import com.otterworks.analytics.config.{AppConfig, SqsConfig}
 import org.slf4j.LoggerFactory
+import io.prometheus.client.Counter
 import io.circe.parser.decode
 import io.circe.generic.auto.*
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider
@@ -92,13 +93,17 @@ class EventProcessor(
                     .build()
                   sqsClient.deleteMessage(deleteReq)
                 } match
-                  case Success(_) => logger.debug("Processed SQS event: {}", event.eventId)
+                  case Success(_) =>
+                    EventProcessor.sqsMessagesTotal.labels("processed").inc()
+                    logger.debug("Processed SQS event: {}", event.eventId)
                   case Failure(ex) => logger.error("Failed to delete SQS message for event {}: {}", event.eventId, ex.getMessage)
               }
               .recover { case ex =>
+                EventProcessor.sqsMessagesTotal.labels("failed").inc()
                 logger.error("Failed to process event from SQS: {}", ex.getMessage)
               }
           case Left(err) =>
+            EventProcessor.sqsMessagesTotal.labels("undecodable").inc()
             logger.error("Failed to decode SQS message: {}", err.getMessage)
             Try {
               val deleteReq = DeleteMessageRequest.builder()
@@ -114,3 +119,10 @@ class EventProcessor(
       .runWith(Sink.ignore)
 
     logger.info("SQS event processor stream started"): Unit
+
+object EventProcessor:
+  val sqsMessagesTotal: Counter = Counter.build()
+    .name("analytics_sqs_messages_total")
+    .help("SQS analytics messages handled, by outcome")
+    .labelNames("outcome")
+    .register()
