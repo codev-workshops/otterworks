@@ -1,21 +1,58 @@
 groups:
   # -----------------------------------------------------------
+  # HTTP Metric Contract
+  # Each stack names its request metrics differently. These two rules map them
+  # onto one shape so every rule and alert below covers every service:
+  #   job_method_path_status:http_requests:rate5m{job,method,path,status}
+  #   job_le:http_request_duration_seconds_bucket:rate5m{job,le}
+  # -----------------------------------------------------------
+  - name: otterworks.http_contract
+    interval: 15s
+    rules:
+      - record: job_method_path_status:http_requests:rate5m
+        expr: >-
+          sum by (job, method, path, status) (
+            label_replace(rate(http_requests_total[5m]), "path", "$1", "handler", "(.+)")
+          )
+          or sum by (job, method, path, status) (rate(api_gateway_http_requests_total[5m]))
+          or sum by (job, method, path, status) (
+            label_replace(rate(search_service_requests_total[5m]), "path", "$1", "endpoint", "(.*)")
+          )
+          or sum by (job, method, path, status) (
+            label_replace(rate(http_server_requests_seconds_count[5m]), "path", "$1", "uri", "(.*)")
+          )
+          or sum by (job, method, path, status) (
+            label_replace(rate(ktor_http_server_requests_seconds_count[5m]), "path", "$1", "route", "(.*)")
+          )
+          or sum by (job, method, path, status) (
+            label_replace(rate(http_requests_received_total[5m]), "status", "$1", "code", "(.*)")
+          )
+
+      - record: job_le:http_request_duration_seconds_bucket:rate5m
+        expr: >-
+          sum by (job, le) (rate(http_request_duration_seconds_bucket[5m]))
+          or sum by (job, le) (rate(api_gateway_http_request_duration_seconds_bucket[5m]))
+          or sum by (job, le) (rate(search_service_request_duration_seconds_bucket[5m]))
+          or sum by (job, le) (rate(http_server_requests_seconds_bucket[5m]))
+          or sum by (job, le) (rate(ktor_http_server_requests_seconds_bucket[5m]))
+
+  # -----------------------------------------------------------
   # Request Rate Recording Rules
   # -----------------------------------------------------------
   - name: otterworks.request_rate
     interval: 15s
     rules:
       - record: job:http_requests:rate5m
-        expr: sum by (job) (rate(http_requests_total[5m]))
+        expr: sum by (job) (job_method_path_status:http_requests:rate5m)
 
       - record: job_status:http_requests:rate5m
-        expr: sum by (job, status) (rate(http_requests_total[5m]))
+        expr: sum by (job, status) (job_method_path_status:http_requests:rate5m)
 
       - record: job_method:http_requests:rate5m
-        expr: sum by (job, method) (rate(http_requests_total[5m]))
+        expr: sum by (job, method) (job_method_path_status:http_requests:rate5m)
 
       - record: job_method_path:http_requests:rate5m
-        expr: sum by (job, method, path) (rate(http_requests_total[5m]))
+        expr: sum by (job, method, path) (job_method_path_status:http_requests:rate5m)
 
   # -----------------------------------------------------------
   # Error Rate Recording Rules
@@ -24,22 +61,22 @@ groups:
     interval: 15s
     rules:
       - record: job:http_errors:rate5m
-        expr: sum by (job) (rate(http_requests_total{status=~"5.."}[5m]))
+        expr: sum by (job) (job_method_path_status:http_requests:rate5m{status=~"5.."})
 
       - record: job:http_error_ratio:rate5m
         expr: >-
-          sum by (job) (rate(http_requests_total{status=~"5.."}[5m]))
+          sum by (job) (job_method_path_status:http_requests:rate5m{status=~"5.."})
           /
-          sum by (job) (rate(http_requests_total[5m]))
+          sum by (job) (job_method_path_status:http_requests:rate5m)
 
       - record: job:http_client_errors:rate5m
-        expr: sum by (job) (rate(http_requests_total{status=~"4.."}[5m]))
+        expr: sum by (job) (job_method_path_status:http_requests:rate5m{status=~"4.."})
 
       - record: job:http_client_error_ratio:rate5m
         expr: >-
-          sum by (job) (rate(http_requests_total{status=~"4.."}[5m]))
+          sum by (job) (job_method_path_status:http_requests:rate5m{status=~"4.."})
           /
-          sum by (job) (rate(http_requests_total[5m]))
+          sum by (job) (job_method_path_status:http_requests:rate5m)
 
   # -----------------------------------------------------------
   # Latency Percentile Recording Rules
@@ -50,25 +87,25 @@ groups:
       - record: job:http_request_duration_seconds:p50
         expr: >-
           histogram_quantile(0.50,
-            sum by (job, le) (rate(http_request_duration_seconds_bucket[5m]))
+            sum by (job, le) (job_le:http_request_duration_seconds_bucket:rate5m)
           )
 
       - record: job:http_request_duration_seconds:p90
         expr: >-
           histogram_quantile(0.90,
-            sum by (job, le) (rate(http_request_duration_seconds_bucket[5m]))
+            sum by (job, le) (job_le:http_request_duration_seconds_bucket:rate5m)
           )
 
       - record: job:http_request_duration_seconds:p95
         expr: >-
           histogram_quantile(0.95,
-            sum by (job, le) (rate(http_request_duration_seconds_bucket[5m]))
+            sum by (job, le) (job_le:http_request_duration_seconds_bucket:rate5m)
           )
 
       - record: job:http_request_duration_seconds:p99
         expr: >-
           histogram_quantile(0.99,
-            sum by (job, le) (rate(http_request_duration_seconds_bucket[5m]))
+            sum by (job, le) (job_le:http_request_duration_seconds_bucket:rate5m)
           )
 
   # -----------------------------------------------------------

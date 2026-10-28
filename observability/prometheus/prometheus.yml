@@ -152,6 +152,21 @@ scrape_configs:
         regex: "(.+):\\d+"
         replacement: "${1}"
 
+  - job_name: report-service
+    scrape_interval: 15s
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["report-service:8091"]
+        labels:
+          service: report-service
+          language: java
+          tier: backend
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: "(.+):\\d+"
+        replacement: "${1}"
+
   - job_name: admin-service
     scrape_interval: 15s
     metrics_path: /metrics
